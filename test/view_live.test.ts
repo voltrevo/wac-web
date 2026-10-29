@@ -1,5 +1,5 @@
 // test-lane: browser — drives Chromium through Playwright, which needs -A
-// A view in an actual browser: `packages/platform/example/todo.wac` built as a page, typed into and clicked by Chromium.
+// A view in an actual browser: `example/todo.wac` built as a page, typed into and clicked by Chromium.
 //
 // `test/wac/view_test.wac` drives the view against `TestDoc`, a document of records, which is where
 // nearly everything about rendering is checked. What it cannot check is the host: that the operations
@@ -8,9 +8,9 @@
 // element under it — in a worker and on the page's own thread — and that the page's Content Security
 // Policy lets it do all that and refuses script written past the handle layer.
 //
-// **Skipped loudly** when there is no browser, in the words `packages/raster/test/live.test.ts` uses.
-import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
+// **Skipped loudly** when there is no browser, in the words `packages/raster/test/live.test.ts` in wac uses.
 
+import { buildPage, serve, waitInPage } from "./harness.ts";
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
   if (a !== b) {
@@ -39,20 +39,6 @@ if (cannotBecause !== "") {
   );
 }
 
-/** Serve a directory. A page built by `packages/web` needs no special headers. */
-function serve(dir: string): { port: number; stop: () => Promise<void> } {
-  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen: () => {} }, async (req) => {
-    const path = new URL(req.url).pathname;
-    try {
-      const body = await Deno.readFile(`${dir}${path === "/" ? "/index.html" : path}`);
-      return new Response(body, { headers: { "content-type": "text/html" } });
-    } catch {
-      return new Response("not found", { status: 404 });
-    }
-  });
-  return { port: server.addr.port, stop: () => server.shutdown() };
-}
-
 for (const mode of [[], ["--in-page"]]) {
   Deno.test({
     name: `a view adds to a list, typed into and clicked in Chromium${mode.length ? " — on the page's own thread" : " — in a worker"}`,
@@ -65,7 +51,7 @@ for (const mode of [[], ["--in-page"]]) {
       let browser;
       let http: { port: number; stop(): Promise<void> } | undefined;
       try {
-        await buildPage("packages/platform/example/todo.wac", dir, mode);
+        await buildPage("example/todo.wac", dir, mode);
         const port = (http = serve(dir)).port;
         browser = await chromium.launch({ args: ["--no-proxy-server"] });
         const page = await browser.newPage();

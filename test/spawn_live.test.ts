@@ -1,5 +1,5 @@
 // test-lane: browser — drives Chromium through Playwright, which needs -A
-// A page runs a module from its own disk, in Chromium (design/system/0015): `packages/platform/example/spawnpage.wac` reads
+// A page runs a module from its own disk, in Chromium (design/system/0015): `example/spawnpage.wac` reads
 // `child.wasm` from the page's storage, starts it with `procs().spawn`, and shows what it wrote and its status.
 //
 // `test/wac/system_test.wac` checks that the page hands the module to the browser; what it cannot check is the
@@ -7,9 +7,8 @@
 // serves its requests and runs it on as their answers arrive, since a page cannot wait for them.
 //
 // **Skipped loudly** when there is no browser, in the words `view_live.test.ts` uses.
-import { buildPage, waitInPage } from "../../../harness/buildPage.ts";
-import { ROOT } from "../../../harness/programs.ts";
 
+import { buildModule, buildPage, serve, waitInPage } from "./harness.ts";
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
   if (a !== b) {
@@ -38,20 +37,6 @@ if (cannotBecause !== "") {
   );
 }
 
-/** Serve a directory. A page built by `packages/web` needs no special headers. */
-function serve(dir: string): { port: number; stop: () => Promise<void> } {
-  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen: () => {} }, async (req) => {
-    const path = new URL(req.url).pathname;
-    try {
-      const body = await Deno.readFile(`${dir}${path === "/" ? "/index.html" : path}`);
-      return new Response(body, { headers: { "content-type": "text/html" } });
-    } catch {
-      return new Response("not found", { status: 404 });
-    }
-  });
-  return { port: server.addr.port, stop: () => server.shutdown() };
-}
-
 Deno.test({
   name: "a page runs modules from its own disk, and hears their output, their errors and their status",
   ignore: cannotBecause !== "",
@@ -63,17 +48,11 @@ Deno.test({
     let browser;
     let http: { port: number; stop(): Promise<void> } | undefined;
     try {
-      await buildPage("packages/platform/example/spawnpage.wac", dir, ["--grant", "read,write", "--spawn", "spin"]);
+      await buildPage("example/spawnpage.wac", dir, ["--grant", "read,write", "--spawn", "spin"]);
       // Three modules: one that uses its host, one whose `main` takes nothing and so has no host to be given, and one
       // that loads the second and calls it.
       for (const [entry, stem] of [["spawnchild", "child"], ["spawnplain", "plain"], ["spawnload", "load"]]) {
-        const built = await new Deno.Command(`${ROOT}/native/v8/target/release/wac`, {
-          args: ["build", `packages/platform/example/${entry}.wac`, "-o", `${dir}/${stem}`],
-          cwd: ROOT,
-          stdout: "piped",
-          stderr: "piped",
-        }).output();
-        if (!built.success) throw new Error(`building ${entry}.wac failed:\n${new TextDecoder().decode(built.stderr)}`);
+        await buildModule(`example/${entry}.wac`, `${dir}/${stem}`);
       }
       const module = await Deno.readFile(`${dir}/child.wasm`);
       const plain = await Deno.readFile(`${dir}/plain.wasm`);
