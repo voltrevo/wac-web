@@ -1,4 +1,4 @@
-// The assertions this package's tests use, here rather than imported from `packages/wactest`.
+// The assertions this package's tests use, here rather than imported from wac's `packages/wactest`.
 //
 // **This package is a project of its own** — it has a `wac.json5`, so a project outside this
 // repository can depend on it — and a project's files cannot import past its root. So its tests carry

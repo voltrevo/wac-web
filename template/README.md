@@ -36,8 +36,8 @@ export async i32 main(Page page) {
   is named with `ref={r}` (`Ref r = ui.ref()`) and drawn from an effect with `r.element()!.pixels(w, h,
   rgba)`.
 
-The whole of `Page` is in the `web` package's
-[README](https://github.com/voltrevo/wac/blob/master/packages/web/README.md).
+The whole of `Page` is in the README of the `web` package, `https://git.voltrevo.com/web.git`, which
+`wac update` puts in `$WAC_HOME/cache/git/`.
 
 ## What is in this directory
 

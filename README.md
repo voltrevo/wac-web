@@ -23,8 +23,8 @@ export async i32 main(Page page) {
 }
 ```
 
-A project outside this repository starts from [`templates/webapp/`](../../templates/webapp/), which
-depends on this package by git and builds with nothing but `wac`.
+A project of your own starts from [`template/`](template/), which depends on this package by git
+(`https://git.voltrevo.com/web.git`) and builds with nothing but `wac`.
 
 ## Components and hooks — `view.wac`
 
@@ -45,7 +45,7 @@ is skipped, and renders again before an event reaches it, so a handler never run
 Hooks are found by the order of the calls, which nothing checks: call them unconditionally.
 
 `TestDoc` is a document of records for tests: hand a page `doc.dom()`, `doc.attach(page)`, and fire events
-at what the view drew. `test/wac/view_test.wac` and `templates/webapp/test` use it.
+at what the view drew. `test/wac/view_test.wac` and `template/test` use it.
 
 ## The handle layer — `element.wac`
 
@@ -97,14 +97,14 @@ outside `[a-z][a-z0-9-]*` or an element that runs on its own traps, naming `html
 on a command line gets, with the browser's Origin Private File System as its disk. `await
 page.sys.readFile(path)` and `await page.sys.writeFile(path, bytes)` work as they do anywhere once the
 page is built with `--grant read,write`; without one they are refused, saying which grant was missing,
-and so is `sys.cli`, which is no way around the grants. The clock, randomness and output need none. [`packages/platform/example/notes.wac`](../platform/example/notes.wac)
-keeps a note that survives a reload.
+and so is `sys.cli`, which is no way around the grants. The clock, randomness and output need none. wac's
+`packages/platform/example/notes.wac` keeps a note that survives a reload.
 
 A page built with `--spawn <export>` can start copies of itself: `sys.procs().spawnSelf(args, …)` runs
 `export async i32 <export>(Sys sys)` in a worker of its own, with those arguments, its input fed by the
 parent, its output and errors read back on handles, and — when asked — its files reached through the
 parent's. That is how a shell's pipeline stages are processes in a page.
-[`packages/platform/example/procs.wac`](../platform/example/procs.wac) is the smallest one: a page that
+wac's `packages/platform/example/procs.wac` is the smallest one: a page that
 starts a copy of itself, streams text into it and reads it back upper-cased.
 
 **And any page can start a module it holds** (design/system/0015): `sys.procs().spawn(wasm, args, …)` with a
@@ -115,8 +115,8 @@ shell on a page runs a program from its disk as it does anywhere else. The worke
 `async` stops at its first wait for the browser. A file that is not a wac module is refused at `spawn`. Such a
 module holds what it was handed and no more, and can itself `load` a module and call it by name — so the `wac`
 command, run that way, can `check`, `build`, `run` and `test`.
-[`packages/platform/example/spawnpage.wac`](../platform/example/spawnpage.wac) runs
-[`spawnchild.wac`](../platform/example/spawnchild.wac), built, from its storage. A page's own program can `load`
+[`example/spawnpage.wac`](example/spawnpage.wac) runs
+[`spawnchild.wac`](example/spawnchild.wac), built, from its storage. A page's own program can `load`
 a module too.
 
 **The page's own thread starts every program**, for whichever worker asks — the page's program, a copy, a module,
@@ -139,10 +139,10 @@ does that for every order in which things can arrive.
 
 ## Building one
 
-    wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac \
+    wac run --allow-read --allow-write --allow-run tools/build.wac \
         <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
-`packages/web/tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
+`tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
 browser's side holds, with the page in a private field and a method for each call the host makes;
 `page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
 host. The host is two halves that talk by messages: the program's half makes a `Dom` whose every
@@ -160,23 +160,30 @@ read something changed without a `set`, a `Vec` in a cell pushed to in place.
 allowed by its hash, which starts the rest from `blob:` URLs; nothing is loaded from anywhere else — no
 outside image, style sheet or font — and an inline handler or a script element written into the
 document by any route does not run. A test driving a built page waits with `waitInPage` from
-`harness/buildPage.ts`, since Playwright's string `waitForFunction` is an `eval` the policy refuses.
+`test/harness.ts`, since Playwright's string `waitForFunction` is an `eval` the policy refuses.
 
 The output directory has to be inside the directory the build runs in, since the wrapper is written
 there and imports the program.
 
 `--page` names the module the wrapper imports `Page` from: `web` by default, which is how a project
-that depends on this package spells it, and `./packages/web` from this repository's root.
+that depends on this package spells it, and `./src/page.wac` from this repository's root.
 
 ## Where it is used
 
-`packages/platform/example/{counter,life,pixels,ripple,notes,procs}.wac`,
-`packages/box/example/{hash,term,desk,rasterterm}.wac`,
-`packages/git/example/gitpage.wac`, `packages/wacc/example/waccpage.wac` and
-`packages/raster/example/rasterdesk.wac` — outside this package, because a page's wrapper imports its
-program from outside it, and this package is a project of its own.
+In wac: `packages/platform/example/{counter,life,pixels,ripple,notes,procs}.wac`,
+`packages/box/example/{hash,term,desk,rasterterm}.wac`, `packages/git/example/gitpage.wac`,
+`packages/wacc/example/waccpage.wac`, `packages/raster/example/rasterdesk.wac` and the site, which import
+this package by git. Outside it: `wac-desktop`.
 
-The shell and the desktop are `packages/web` pages built `--grant read,write --spawn applet`: every
-applet a process, every file in the Origin Private File System, and the command a task the page keeps
-reading the keyboard beside — so `^C` stops it. `packages/box/example/rasterterm.wac` is the same
-shell drawn on a canvas.
+The shell and the desktop are pages built `--grant read,write --spawn applet`: every applet a process,
+every file in the Origin Private File System, and the command a task the page keeps reading the keyboard
+beside — so `^C` stops it. wac's `packages/box/example/rasterterm.wac` is the same shell drawn on a canvas.
+
+## Testing
+
+    wac check . && wac test test/wac                 the package, with no browser — about a second
+    deno test -A --unstable-net --no-check test/     the template outside the repository, and pages in Chromium
+    tools/push.sh                                    all of it, then push
+
+`$WAC` names the `wac` the Deno tests run, and the one on `PATH` otherwise. The browser tests skip, loudly,
+with no Chromium in `~/.cache/ms-playwright`.

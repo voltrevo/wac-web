@@ -1,6 +1,6 @@
 // Build a page: `<entry.wac>` exporting `async i32 main(Page page)` becomes one `index.html` that runs it.
 //
-//     wac run --allow-read --allow-write --allow-run packages/web/tools/build.wac src/app.wac dist
+//     wac run --allow-read --allow-write --allow-run tools/build.wac src/app.wac dist
 //
 // **Three steps, all of them visible in the output directory.** A wrapper module, `page.wac`, gives the
 // host the calls it makes — make a page, start the program, deliver an element's event, a timer, a file
@@ -17,7 +17,7 @@
 // because the host is two halves that talk by messages, and in a page they are joined directly.
 //
 // **A program, not a script in someone else's language**, so a project outside this repository builds
-// a page with the `wac` it already has and this package as a dependency (`templates/webapp/`). It
+// a page with the `wac` it already has and this package as a dependency (`template/`). It
 // runs `wac bindgen` as a command, which is why it needs `--allow-run`; `--wac <path>` names a binary
 // other than the one on `PATH`, and `--page <spec>` the module the wrapper imports `Page` from when the
 // project does not map this package as `web`.
@@ -152,7 +152,7 @@ export string relativeTo(string from, string to) {
 /**
  * The wrapper: the program's `main`, and `PageHost`, the one thing the browser's side holds.
  *
- * **Not `Host`**, which `packages/fs` and `packages/url` both declare: in a page whose program reaches
+ * **Not `Host`**, which wac's `packages/fs` and `packages/url` both declare: in a page whose program reaches
  * them, the wrapper's struct was keyed apart from theirs and the glue's class by that name did not
  * exist — "Host is not defined" on load.
  *
@@ -162,7 +162,7 @@ export string relativeTo(string from, string to) {
  * 24 classes and 71 KB of glue for a counter.
  */
 export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn, bool dev) {
-  string w = "// Written by packages/web/tools/build.wac — the calls the host makes, and the program they run.\n"
+  string w = "// Written by web's tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
            + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, located, timerFired, valueArrived"
            + (spawn != "" ? ", Process, processAnswered" : "")
@@ -703,7 +703,7 @@ export string childSide() {
 /**
  * A module the page was handed, run in a worker of its own (design/system/0015): `OP_SPAWN`'s other half.
  *
- * **Driven from its manifest**, as `packages/platform/host/driver.ts` drives one on Deno and Node: the module
+ * **Driven from its manifest**, as wac's `packages/platform/host/driver.ts` drives one on Deno and Node: the module
  * describes its own boundary in a `wac.manifest` section, and since design/system/0013 step 6 that boundary is a
  * handful of plain values — `__wacHost` takes the host's four calls, `__wacAnswered` takes an answer, and the rest
  * are opaque references handed straight back. So the conversions are strings, arrays and functions, and they are

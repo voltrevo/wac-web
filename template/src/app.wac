@@ -1,6 +1,6 @@
 // The application: `main` mounts a view, and the view keeps the page showing what the state says.
 //
-// A component is a function of `Ui` (`packages/web`'s `view.wac`): `ui.state` gives it state that lasts
+// A component is a function of `Ui` (the `web` package's `view.wac`): `ui.state` gives it state that lasts
 // from one render to the next, and setting that state renders again the component that owns it — only
 // that one, and what it passes new attributes to. Handlers are closures; they change state, and the page
 // follows.

@@ -1,5 +1,5 @@
 // A to-do list as a page: components of `Ui`, state that renders only what it changes, handlers that
-// are closures. The same program as `templates/webapp`, importing this package by path — what
+// are closures. The same program as `template/`, importing this package by path — what
 // `test/view_live.test.ts` builds and drives in a browser.
 
 import { ElementEvent, Node, Page, Ui, html.button, html.div, html.h1, html.input, html.li, html.p, html.ul } from "../src/page.wac";
