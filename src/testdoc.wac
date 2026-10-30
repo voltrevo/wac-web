@@ -1,15 +1,27 @@
-// A document for tests: what `ElementOps` would do to a browser's, done to a tree of records here.
+// A document for tests: a host answering `wac.page` (`line.wac`) into a tree of records.
 //
-// Every operation the program sends lands in `nodes`, and an event is fired the way a browser fires one —
-// at a target, heard by every listener from the target up, nearest first. `ops` counts the operations,
-// which is what says how much a render sent.
+// Every change the program sends lands in `nodes`, and an event is fired the way a browser fires one — at a
+// target, heard by every listener from the target up, nearest first — as the answer to the program's request for
+// its next event. `ops` counts the element operations, which is what says how much a render sent; `said` is
+// every request the program made that a reader would check, one line each.
 //
-// **Part of the package, for an application's tests** — as `Dom.inert()` is for a page's: hand a page
-// `doc.dom()`, attach it, and fire events at what the view drew. `template/test` does.
+// **The host's other answers are the test's to give**: the clock stands still until `advance` moves it, a frame
+// comes when `paint` says, an element's value when `answerValue` does, a file when `hand` does, a new location
+// when `go` does. So every order in which things can arrive is one a test can write down.
+//
+// **Part of the package, for an application's tests**: `doc.page()` is a page over this document, and events
+// fired at what the view drew run the program on and render, as a browser's would. `template/test` does.
 
 import { Vec } from "core";
-import { ElementOps, Elements } from "./element.wac";
-import { Dom, Page, elementEvent } from "./page.wac";
+import { Answer, FAULT_UNSUPPORTED, OP_CAPABILITY, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS } from "std";
+import { Elements } from "./element.wac";
+import { Page, answered } from "./page.wac";
+import { System, World } from "./system.wac";
+import { Happened, PAGE_CAPABILITY, PAGE_COUNT, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_TYPE_TEXT,
+         PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
+
+/** Where this document's `wac.page` numbers start, as a host would choose them. */
+static i32 BASE = 4096;
 
 /** One node of the document: an element or, with an empty `tag`, a text node. */
 export struct TestNode {
@@ -29,14 +41,23 @@ export struct TestNode {
   i32 selEnd;
 }
 
+/** A file handed over before anything asked for one. */
+struct Kept {
+  bool ok;
+  string name;
+  u8[] bytes;
+}
+
 export struct TestDoc {
   Vec<TestNode?> nodes;
   i32 ops;
   i32 seq;
-  /** The handles' owner, once the elements exist — events go to it. */
+  /** The host the program's requests go to, once made. */
+  World? world;
+  /** The handles' owner, once the elements exist. */
   Elements? es;
-  /** The page they belong to, when there is one: an event then goes through it, and its views render. */
-  Page? page;
+  /** The page they belong to, when there is one: an answer then runs it on, and its views render. */
+  Page? owner;
   /** The last scroll asked for, as `"<handle> <name>"` — the name empty when it was the element itself. */
   string scrolled;
   /**
@@ -45,13 +66,262 @@ export struct TestDoc {
    * outside any event, with the next one.
    */
   Vec<i32> typedInto;
+  /** Every request a reader would check, one line each: `make 1 button`, `sleep 250`, `title Notes`… */
+  string said;
+  /** The clock, in milliseconds: still until `advance` moves it. */
+  f64 now;
+  /** The requests waiting for an answer, each by its number: the next event, sleeps, frames, values, files, locations. */
+  Vec<i32> eventAsks;
+  Vec<i32> sleepAsks;
+  Vec<f64> sleepDue;
+  Vec<i32> frameAsks;
+  /** Every value read, in the order asked — `answerValue(k, …)` answers the `k`th — and whether it has been. */
+  Vec<i32> valueAsks;
+  Vec<i32> fileAsks;
+  Vec<Kept> kept;
+  Vec<i32> locationAsks;
+  /** The location, without its `#`. */
+  string location;
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
-    Vec<i32> typedInto = Vec.create();
-    TestDoc d = TestDoc(nodes, 0, 0, null, null, "", typedInto);
+    TestDoc d = TestDoc(nodes, 0, 0, null, null, null, "", Vec.create(), "", 0.0, Vec.create(), Vec.create(), Vec.create(),
+                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "");
     d.put(0, "div", 0 - 1);
+    d.world = World.create(System((i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { d.request(op, id, a, b, text, bytes); },
+                                  (i32 code) => { }), 0);
     return d;
+  }
+
+  /** The program's end of this document: the host, and where `wac.page` starts on it. */
+  PageLine line(this) { return PageLine(this.world!.host, BASE); }
+
+  /** A page over this document, whose answers run it on and render its views. */
+  Page page(this) {
+    Page p = Page.over(this.line(), this.world!.sys);
+    this.owner = p;
+    this.es = p.es;
+    return p;
+  }
+
+  /** Handles over this document with no page around them — a view's test, which renders by hand. */
+  Elements elements(this) {
+    Elements es = Elements.create(this.line());
+    this.es = es;
+    return es;
+  }
+
+  // ── Answering ──────────────────────────────────────────────────────────────
+
+  /** Answer request `id` — at once if it is still being asked, and running the page on if not. */
+  void answer(this, i32 id, Answer a) {
+    if (this.owner is not null) {
+      answered(this.owner!, this.world!, id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
+      return;
+    }
+    this.world!.deliver(id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
+  }
+
+  void answerWith(this, i32 id, string text, u8[] bytes, i64 n, i64 m, i32 flags) {
+    this.answer(id, Answer(0, text, bytes, n, m, flags));
+  }
+
+  /** An event, as the document would say it: the oldest request for one hears it. None waiting, and it is lost. */
+  void event(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y, i32 mods,
+             i32 selStart, i32 selEnd) {
+    if (this.eventAsks.len() == 0) { return; }
+    i32 id = this.eventAsks.remove(0);
+    this.answer(id, eventAnswer(Happened(seq, kind, target, listener, value, x, y, mods, selStart, selEnd)));
+  }
+
+  /** Move the clock on by `ms`, waking each sleep that falls due, earliest first. */
+  void advance(this, i32 ms) {
+    f64 until = this.now + (ms as f64);
+    while (true) {
+      i32 best = 0 - 1;
+      for (i32 i = 0; i < this.sleepDue.len(); i++) {
+        if (this.sleepDue.get(i) <= until && (best < 0 || this.sleepDue.get(i) < this.sleepDue.get(best))) { best = i; }
+      }
+      if (best < 0) { break; }
+      this.now = this.sleepDue.remove(best);
+      i32 id = this.sleepAsks.remove(best);
+      this.answerWith(id, "", u8[](), this.nanos(), 0 as i64, 0);
+    }
+    this.now = until;
+  }
+
+  i64 nanos(this) { return (this.now * 1000000.0) as~ i64; }
+
+  /** The browser paints: every frame asked for is answered. */
+  void paint(this) {
+    Vec<i32> asked = this.frameAsks;
+    this.frameAsks = Vec.create();
+    for (i32 i = 0; i < asked.len(); i++) { this.answerWith(asked.get(i), "", u8[](), 0 as i64, 0 as i64, 0); }
+  }
+
+  /** The `k`th value read, in the order they were asked, answers `value`. A read answered already ignores it. */
+  void answerValue(this, i32 k, string value) { this.answerWith(this.valueAsks.get(k), value, u8[](), 0 as i64, 0 as i64, 0); }
+
+  /** The user hands over a file — or one that could not be read, saying why. */
+  void hand(this, bool ok, string name, u8[] bytes) {
+    if (this.fileAsks.len() == 0) {
+      this.kept.push(Kept(ok, name, bytes));
+      return;
+    }
+    this.answerWith(this.fileAsks.remove(0), name, bytes, 0 as i64, 0 as i64, ok ? 0 : 1);
+  }
+
+  /** The location becomes `hash`; everything asking for a location other than it hears it. */
+  void go(this, string hash) {
+    this.location = hash.len() > 0 && hash[0] == "#" ? hash.slice(1, hash.len()) : hash;
+    Vec<i32> asked = this.locationAsks;
+    this.locationAsks = Vec.create();
+    for (i32 i = 0; i < asked.len(); i++) { this.answerWith(asked.get(i), this.location, u8[](), 0 as i64, 0 as i64, 0); }
+  }
+
+  // ── The requests ───────────────────────────────────────────────────────────
+
+  void request(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+    if (op == OP_CAPABILITY()) {
+      if (text != PAGE_CAPABILITY()) {
+        this.answer(id, Answer(FAULT_UNSUPPORTED(), "no capability " + text + " in a test document", u8[](), 0 as i64, 0 as i64, 0));
+        return;
+      }
+      this.answerWith(id, PAGE_VERSION(), u8[](), BASE as i64, PAGE_COUNT as i64, 0);
+      return;
+    }
+    if (op == OP_MONOTONIC_NANOS()) {
+      this.answerWith(id, "", u8[](), this.nanos(), 0 as i64, 0);
+      return;
+    }
+    if (op == OP_SLEEP_MILLIS()) {
+      this.said = this.said + "sleep \{a}\n";
+      this.sleepAsks.push(id);
+      this.sleepDue.push(this.now + (a as~ f64));
+      return;
+    }
+    i32 k = op - BASE;
+    if (k < 0 || k >= PAGE_COUNT) {
+      if (id != 0) { this.answer(id, Answer(FAULT_UNSUPPORTED(), "a test document does not serve request \{op}", u8[](), 0 as i64, 0 as i64, 0)); }
+      return;
+    }
+    if (k <= PAGE_TYPE_TEXT) {
+      this.ops++;
+      this.element(k, id, a, b, text, bytes);
+      return;
+    }
+    if (k == 15) { this.said = this.said + "title " + text + "\n"; return; }
+    if (k == 16) { this.said = this.said + "log " + text + "\n"; return; }
+    if (k == 17) { this.said = this.said + "download " + text + "\n"; return; }
+    if (k == PAGE_EVENT) { this.eventAsks.push(id); return; }
+    if (k == PAGE_FRAME) {
+      this.said = this.said + "frame\n";
+      this.frameAsks.push(id);
+      return;
+    }
+    if (k == PAGE_FILE) {
+      if (this.kept.len() == 0) { this.fileAsks.push(id); return; }
+      Kept f = this.kept.remove(0);
+      this.answerWith(id, f.name, f.bytes, 0 as i64, 0 as i64, f.ok ? 0 : 1);
+      return;
+    }
+    if (k == PAGE_LOCATION) {
+      if (text != this.location) { this.answerWith(id, this.location, u8[](), 0 as i64, 0 as i64, 0); return; }
+      this.locationAsks.push(id);
+    }
+  }
+
+  /** An element operation, done to the records. */
+  void element(this, i32 k, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+    i32 h = lowOf(a);
+    i32 seen = highOf(a);
+    if (k == 0 || k == 1) {
+      i32 parent = highOf(b);
+      i32 before = lowOf(b);
+      this.said = this.said + (k == 0 ? "make \{h} " : "makeText \{h} ") + text + "\n";
+      this.put(h, k == 0 ? text : "", parent);
+      if (k == 1) {
+        TestNode made = this.at(h);
+        made.text = text;
+      }
+      this.place(h, parent, before);
+      return;
+    }
+    if (k == 2) {
+      this.said = this.said + "text \{h} " + text + "\n";
+      TestNode n = this.at(h);
+      if (n.tag != "") {
+        for (i32 i = 0; i < n.kids.len(); i++) { this.forget(n.kids.get(i)); }
+        n.kids.clear();
+      }
+      n.text = text;
+      return;
+    }
+    if (k == 3) {
+      this.setAttr(this.at(h), text, string.fromBytes(bytes), b != 0 as i64);
+      return;
+    }
+    if (k == 4) {
+      TestNode n = this.at(h);
+      string value = string.fromBytes(bytes);
+      if (text == "value" && n.typed > seen) { return; }
+      this.setAttr(n, "." + text, value, true);
+      // A value set by a program puts the caret at its end, as a browser does.
+      if (text == "value" && n.selStart >= 0) { n.selStart = value.len(); n.selEnd = value.len(); }
+      return;
+    }
+    if (k == 5) {
+      TestNode n = this.at(h);
+      this.unplace(h);
+      this.place(h, n.parent, b as~ i32);
+      return;
+    }
+    if (k == 6) {
+      this.unplace(h);
+      this.forget(h);
+      return;
+    }
+    if (k == 7) {
+      this.said = this.said + "listen \{h} " + text + "\n";
+      this.at(h).listens.push(text);
+      this.at(h).prevents.push(string.fromBytes(bytes));
+      return;
+    }
+    if (k == PAGE_VALUE) {
+      this.said = this.said + "value \{h}\n";
+      this.valueAsks.push(id);
+      return;
+    }
+    // A canvas's picture as its text: its size and its first byte, which is what a test can tell apart.
+    if (k == 10) {
+      TestNode c = this.at(h);
+      c.text = "pixels \{highOf(b)}x\{lowOf(b)} \{bytes.len() > 0 ? bytes[0] as i32 : 0 - 1}";
+      return;
+    }
+    if (k == 11) {
+      TestNode c = this.at(h);
+      c.text = "pixelsIn \{quadAt(b, 0)},\{quadAt(b, 1)} \{quadAt(b, 2)}x\{quadAt(b, 3)} \{bytes.len() > 0 ? bytes[0] as i32 : 0 - 1}";
+      return;
+    }
+    if (k == 12) {
+      this.scrolled = "\{h} " + text;
+      return;
+    }
+    if (k == 13) {
+      TestNode n = this.at(h);
+      if (n.selStart < 0 || n.typed > seen) { return; }
+      this.caret(h, highOf(b), lowOf(b));
+      return;
+    }
+    if (k == 14) {
+      TestNode n = this.at(h);
+      if (n.selStart < 0 || n.typed > seen) { return; }
+      string v = this.valueOf(h);
+      this.setAttr(n, ".value", v.slice(0, n.selStart) + text + v.slice(n.selEnd, v.len()), true);
+      n.selStart = n.selStart + text.len();
+      n.selEnd = n.selStart;
+      this.typedInto.push(h);
+    }
   }
 
   void put(this, i32 id, string tag, i32 parent) {
@@ -89,103 +359,6 @@ export struct TestDoc {
     TestNode n = this.at(id);
     for (i32 i = 0; i < n.kids.len(); i++) { this.forget(n.kids.get(i)); }
     this.nodes.set(id, null);
-  }
-
-  /** A page's document: `Dom.inert()` with these operations. Attach the page once it exists. */
-  Dom dom(this) {
-    Dom d = Dom.inert();
-    d.elements = this.elementOps();
-    return d;
-  }
-
-  /** Events from here on go to `page`, which renders its views after each. */
-  void attach(this, Page page) {
-    this.page = page;
-    this.es = page.es;
-  }
-
-  /** The operations, as a host would supply them. */
-  ElementOps elementOps(this) {
-    TestDoc d = this;
-    return ElementOps(
-      (i32 id, i32 parent, string tag, i32 before) => { d.ops++; d.put(id, tag, parent); d.place(id, parent, before); },
-      (i32 id, i32 parent, string text, i32 before) => {
-        d.ops++;
-        d.put(id, "", parent);
-        TestNode made = d.at(id);
-        made.text = text;
-        d.place(id, parent, before);
-      },
-      (i32 id, string text) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        if (n.tag == "") { n.text = text; return; }
-        for (i32 i = 0; i < n.kids.len(); i++) { d.forget(n.kids.get(i)); }
-        n.kids.clear();
-        n.text = text;
-      },
-      (i32 id, string name, string value, bool present) => {
-        d.ops++;
-        d.setAttr(d.at(id), name, value, present);
-      },
-      (i32 id, string name, string value, i32 seen) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        if (name == "value" && n.typed > seen) { return; }
-        d.setAttr(n, "." + name, value, true);
-        // A value set by a program puts the caret at its end, as a browser does.
-        if (name == "value" && n.selStart >= 0) { n.selStart = value.len(); n.selEnd = value.len(); }
-      },
-      (i32 id, i32 before) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        d.unplace(id);
-        d.place(id, n.parent, before);
-      },
-      (i32 id) => {
-        d.ops++;
-        d.unplace(id);
-        d.forget(id);
-      },
-      (i32 id, string kind, string prevent) => {
-        d.ops++;
-        d.at(id).listens.push(kind);
-        d.at(id).prevents.push(prevent);
-      },
-      (i32 id) => { d.ops++; },
-      (i32 req, i32 id) => { d.ops++; },
-      // A canvas's picture as its text: its size and its first byte, which is what a test can tell apart.
-      (i32 id, i32 w, i32 h, u8[] rgba) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        n.text = "pixels \{w}x\{h} \{rgba.len() > 0 ? rgba[0] as i32 : 0 - 1}";
-      },
-      (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        n.text = "pixelsIn \{x},\{y} \{w}x\{h} \{rgba.len() > 0 ? rgba[0] as i32 : 0 - 1}";
-      },
-      (i32 id, string named) => {
-        d.ops++;
-        d.scrolled = "\{id} " + named;
-      },
-      (i32 id, i32 start, i32 end, i32 seen) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        if (n.selStart < 0 || n.typed > seen) { return; }
-        d.caret(id, start, end);
-      },
-      (i32 id, string text, i32 seen) => {
-        d.ops++;
-        TestNode n = d.at(id);
-        if (n.selStart < 0 || n.typed > seen) { return; }
-        string v = d.valueOf(id);
-        d.setAttr(n, ".value", v.slice(0, n.selStart) + text + v.slice(n.selEnd, v.len()), true);
-        n.selStart = n.selStart + text.len();
-        n.selEnd = n.selStart;
-        d.typedInto.push(id);
-      }
-    );
   }
 
   void setAttr(this, TestNode n, string name, string value, bool present) {
@@ -281,8 +454,7 @@ export struct TestDoc {
       TestNode n = this.at(at);
       for (i32 i = 0; i < n.listens.len(); i++) {
         if (n.listens.get(i) != kind) { continue; }
-        if (this.page is not null) { elementEvent(this.page!, this.seq, kind, target, at, value, 0, 0, 0, selStart, selEnd); }
-        else { this.es!.deliver(this.seq, kind, target, at, value, 0, 0, 0, selStart, selEnd); }
+        this.event(this.seq, kind, target, at, value, 0, 0, 0, selStart, selEnd);
       }
       if (this.nodes.get(at) is null) { break; }
       at = n.parent;

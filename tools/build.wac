@@ -164,33 +164,46 @@ export string relativeTo(string from, string to) {
 export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn, bool dev) {
   string w = "// Written by web's tools/build.wac — the calls the host makes, and the program they run.\n"
            + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { Dom, Page, System, World, answered, elementEvent, fileArrived, located, timerFired, valueArrived"
+           + "import { PAGE_CAPABILITY, Page, PageLine, Runner, System, World, answered"
            + (spawn != "" ? ", Process, processAnswered" : "")
            + " } from \"\{pageSpec}\";\n"
-           + (spawn != "" ? "import { Sys } from \"std\";\n" : "") + "\n"
+           + "import { Answer, OP_CAPABILITY" + (spawn != "" ? ", Sys" : "") + ", ask } from \"std\";\n"
+           + "import { Ticket } from \"core\";\n\n"
            + "export struct PageHost {\n"
-           + "  private Page page;\n";
-  // **The page's world is made inside the page's schedule**, so the scheduler it builds does not become
-  // the program's default target: everything that resumes the program comes through the host, and the
-  // host resumes it under the page. Its `Sys` is `page.sys`, holding what the build granted.
-  w = w + "  private World world;\n\n"
-        + "  PageHost create(Dom dom, System system) {\n"
-        + "    Page page = Page.create(dom);\n"
-        + "    schedule page.take;\n"
-        + "    World world = World.create(system, \{grants});\n"
-        + "    page.sys = world.sys;\n"
-        + (dev ? "    page.checking = true;\n" : "")
-        + "    return PageHost(page, world);\n"
+           + "  private World world;\n"
+           + "  private Page? page;\n\n";
+  // **The world is made under a schedule of its own**, so the scheduler it builds does not become the program's
+  // default target: everything that resumes the program comes through the host, and the host resumes it under the
+  // page. Its `Sys` is `page.sys`, holding what the build granted.
+  w = w + "  PageHost create(System system) {\n"
+        + "    Runner r = Runner.create();\n"
+        + "    schedule r.take;\n"
+        + "    return PageHost(World.create(system, \{grants}), null);\n"
         + "  }\n\n"
+        // **An answer before the page is open is the lookup's own**, or the first location's: given inside the
+        // request that asked, so it runs nothing on.
         + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
-        + "    answered(this.page, this.world, req, fault, text, bytes, n, m, flags);\n"
+        + "    if (this.page is null) {\n"
+        + "      this.world.deliver(req, fault, text, bytes, n, m, flags);\n"
+        + "      return;\n"
+        + "    }\n"
+        + "    answered(this.page!, this.world, req, fault, text, bytes, n, m, flags);\n"
         + "  }\n";
-  w = w + "\n  /** Run the program, with the page as its schedule target, until it first waits. */\n"
+  // **The page is found by name, as any program finds it**, and the host here answers the lookup at once, so it is
+  // read straight off its ticket rather than awaited: nothing has run yet that could wait.
+  w = w + "\n  /** Open the page this host provides, then run the program with it as its schedule target until it first waits. */\n"
         + "  void start(this) {\n"
-        + "    schedule this.page.take;\n"
-        + "    main(this.page);\n"
-        + "    this.page.drain();\n"
-        + "    this.page.turn();\n"
+        + "    Ticket<Answer> found = ask(this.world.host, OP_CAPABILITY(), 0 as i64, 0 as i64, PAGE_CAPABILITY(), \"^1\".toBytes());\n"
+        + "    if (!found.settled() || found.value().fault != 0) {\n"
+        + "      trap \"the page's host does not provide \" + PAGE_CAPABILITY() + (found.settled() ? \": \" + found.value().text : \"\");\n"
+        + "    }\n"
+        + "    Page page = Page.over(PageLine(this.world.host, found.value().n as~ i32), this.world.sys);\n"
+        + (dev ? "    page.checking = true;\n" : "")
+        + "    this.page = page;\n"
+        + "    schedule page.take;\n"
+        + "    main(page);\n"
+        + "    page.drain();\n"
+        + "    page.turn();\n"
         + "  }\n";
   // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
   // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `PageHost` is.
@@ -213,45 +226,32 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
     + "    processAnswered(this.p, req, fault, text, bytes, n, m, flags);\n"
     + "  }\n"
     + "}\n";
-  return w + """
-
-           void element(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y,
-                        i32 mods, i32 selStart, i32 selEnd) {
-             elementEvent(this.page, seq, kind, target, listener, value, x, y, mods, selStart, selEnd);
-           }
-
-           void timer(this, i32 id) { timerFired(this.page, id); }
-
-           void file(this, bool ok, string name, u8[] bytes, string error) {
-             fileArrived(this.page, ok, name, bytes, error);
-           }
-
-           void value(this, i32 req, string value) { valueArrived(this.page, req, value); }
-
-           void located(this, string hash) { located(this.page, hash); }
-         }
-         """ + spawned;
+  return w + "}\n" + spawned;
 }
 
 /**
- * The program's half of the host: a `Dom` that turns each change into a message for the document,
- * and `receive`, which turns each message back into a call on the `PageHost`. It runs wherever the
- * program does — in a worker, or on the page — and touches nothing of the document itself. Timers
- * and the clock are here because a worker has both; a frame is the document's to give.
+ * The program's half of the host: `wac.page` (`src/line.wac`) answered over the system's requests. Each change
+ * the program asks for becomes a message for the document, and each event, frame, file, value and location the
+ * document sends back answers the request waiting for it. It runs wherever the program does — in a worker, or
+ * on the page — and touches nothing of the document itself; a frame is the document's to give, and the clock and
+ * timers are the system's.
  *
- * `wacProgram(post, hash)` starts the program at location `hash` and answers `receive`. A buffer is handed over rather than
- * copied when it is the whole of its own memory, which is what `wac bindgen` gives a `u8[]`.
+ * `wacProgram(post, where)` starts the program at location `where` and answers `receive`. `wacPageServer` is the
+ * same layer as plain JavaScript, `request`, `exit` and `receive`, for whatever else is to draw into this
+ * document. A buffer is handed over rather than copied when it is the whole of its own memory, which is what
+ * `wac bindgen` gives a `u8[]`.
  */
 export string programSide() {
-  // Every page has a system: what it was not granted, its `Cli` refuses (`page.sys`).
-  string make = "const makeHost = (dom) => PageHost.create(dom, wacSystem((...a) => host.answer(...a), "
-              + "{ child: false, args: [], cwd: \"/\", post: null }));\n";
   return """
-      const wacProgram = (post, where) => {
-        let host = null;
-      """ + make + """
-      
-        const own = (bytes) => bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [];
+      const wacPageServer = (answer, me, post, where) => {
+        const s = wacServer(answer, me);
+        // **Where `wac.page`'s numbers start here** — above every request std numbers, below the 2^20 a parent
+        // numbers the capabilities it provides from.
+        const BASE = 4096, COUNT = 22;
+        const NONE = new Uint8Array(0), dec = new TextDecoder(), enc = new TextEncoder();
+        const lo = (v) => Number(BigInt.asIntN(32, v)), hi = (v) => Number(v >> 32n);
+        const pair = (high, low) => (BigInt(high) << 32n) | BigInt(low >>> 0);
+        const quadAt = (v, k) => Number((v >> BigInt(48 - 16 * k)) & 0xffffn);
         // **One message a turn.** The program runs until it waits; what it asked of the document meanwhile
         // goes as one batch, in order, when it does — so a diff that makes five hundred changes costs one
         // message, and an element made in a turn exists before a later call in that turn draws into it.
@@ -264,44 +264,86 @@ export string programSide() {
           batch.push(m);
           if (transfer) moving.push(...transfer);
         };
-        const elements = ElementOps.of(
-          (id, parent, tag, before) => send(["make", id, parent, tag, before]),
-          (id, parent, text, before) => send(["makeText", id, parent, text, before]),
-          (id, text) => send(["text", id, text]),
-          (id, name, value, present) => send(["attr", id, name, value, present]),
-          (id, name, value, seen) => send(["prop", id, name, value, seen]),
-          (id, before) => send(["move", id, before]),
-          (id) => send(["remove", id]),
-          (id, kind, prevent) => send(["listenOn", id, kind, prevent]),
-          (id) => send(["focus", id]),
-          (req, id) => send(["valueOf", req, id]),
-          (id, w, h, rgba) => send(["pixels", id, w, h, rgba], own(rgba)),
-          (id, x, y, w, h, rgba) => send(["pixelsIn", id, x, y, w, h, rgba], own(rgba)),
-          (id, named) => send(["scroll", id, named]),
-          (id, start, end, seen) => send(["select", id, start, end, seen]),
-          (id, text, seen) => send(["typeText", id, text, seen]),
-        );
-        const dom = Dom.of(
-          elements,
-          (title) => send(["title", title]),
-          (line) => { console.log(line); },
-          () => performance.now(),
-          (id, ms) => { setTimeout(() => host.timer(id), ms); },
-          (id) => send(["frame", id]),
-          (name, bytes) => send(["download", name, bytes], own(bytes)),
-        );
-        host = makeHost(dom);
-        host.located(where);
-        host.start();
-        return (m) => {
-          switch (m[0]) {
-            case "timer": host.timer(m[1]); break;
-            case "file": host.file(m[1], m[2], m[3], m[4]); break;
-            case "value": host.value(m[1], m[2]); break;
-            case "el": host.element(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10]); break;
-            case "where": host.located(m[1]); break;
+        // **What the document said that the program has not asked for yet**, and the requests waiting for it.
+        // An event or a file is answered later, never inside the request that asked — so each runs the
+        // program on in a turn of its own, and renders before the next.
+        const events = [], eventAsks = [], files = [], fileAsks = [], frames = new Map(), values = new Map();
+        let at = where, locationAsks = [], lastFrame = 0, lastValue = 0;
+        const strip = (h) => h.startsWith("#") ? h.slice(1) : h;
+        const giveEvent = (id, [seq, kind, target, listener, value, x, y, mods, selStart, selEnd]) => {
+          const k = enc.encode(kind), b = new Uint8Array(12 + k.length), v = new DataView(b.buffer);
+          v.setInt32(0, seq, true); v.setInt32(4, selStart, true); v.setInt32(8, selEnd, true);
+          b.set(k, 12);
+          answer(id, 0, value, b, pair(listener, target), pair(x, y), mods);
+        };
+        const giveFile = (id, [ok, name, bytes, error]) => answer(id, 0, name, ok ? bytes : enc.encode(error), 0n, 0n, ok ? 0 : 1);
+        // A location is answered at once, even inside the request: the program learns where it is before it runs.
+        const located = () => {
+          const waiting = locationAsks;
+          locationAsks = [];
+          for (const w of waiting) { if (strip(at) !== w.known) answer(w.id, 0, strip(at), NONE, 0n, 0n, 0); else locationAsks.push(w); }
+        };
+        const flush = () => {
+          while (eventAsks.length && events.length) giveEvent(eventAsks.shift(), events.shift());
+          while (fileAsks.length && files.length) giveFile(fileAsks.shift(), files.shift());
+        };
+        const page = (k, id, a, b, text, bytes) => {
+          switch (k) {
+            case 0: return send(["make", lo(a), hi(b), text, lo(b)]);
+            case 1: return send(["makeText", lo(a), hi(b), text, lo(b)]);
+            case 2: return send(["text", lo(a), text]);
+            case 3: return send(["attr", lo(a), text, dec.decode(bytes), b !== 0n]);
+            case 4: return send(["prop", lo(a), text, dec.decode(bytes), hi(a)]);
+            case 5: return send(["move", lo(a), lo(b)]);
+            case 6: return send(["remove", lo(a)]);
+            case 7: return send(["listenOn", lo(a), text, dec.decode(bytes)]);
+            case 8: return send(["focus", lo(a)]);
+            case 9: { const req = ++lastValue; values.set(req, id); return send(["valueOf", req, lo(a)]); }
+            case 10: return send(["pixels", lo(a), hi(b), lo(b), bytes], wacOwn(bytes));
+            case 11: return send(["pixelsIn", lo(a), quadAt(b, 0), quadAt(b, 1), quadAt(b, 2), quadAt(b, 3), bytes], wacOwn(bytes));
+            case 12: return send(["scroll", lo(a), text]);
+            case 13: return send(["select", lo(a), hi(b), lo(b), hi(a)]);
+            case 14: return send(["typeText", lo(a), text, hi(a)]);
+            case 15: return send(["title", text]);
+            case 16: console.log(text); return;
+            case 17: return send(["download", text, bytes], wacOwn(bytes));
+            case 18: eventAsks.push(id); return queueMicrotask(flush);
+            case 19: fileAsks.push(id); return queueMicrotask(flush);
+            case 20: { const f = ++lastFrame; frames.set(f, id); return send(["frame", f]); }
+            case 21: locationAsks.push({ id, known: text }); return located();
           }
         };
+        const request = (op, id, a, b, text, bytes) => {
+          if (op === 68 && text === "wac.page") {
+            // `^1`, `^1.2`, or an exact `1.2.3`: this host speaks 1.0.0, which only `^1`, `^1.0`, `^1.0.0` and `1.0.0` allow.
+            const v = dec.decode(bytes);
+            const [major, minor, patch] = (v.startsWith("^") ? v.slice(1) : v).split(".");
+            const allowed = v.startsWith("^") ? major === "1" && (minor ?? "0") === "0" && (patch ?? "0") === "0" : v === "1.0.0";
+            if (!allowed) {
+              return answer(id, 9, "wac.page here is 1.0.0, which " + v + " does not allow", NONE, 0n, 0n, 0);
+            }
+            return answer(id, 0, "1.0.0", NONE, BigInt(BASE), BigInt(COUNT), 0);
+          }
+          if (op >= BASE && op < BASE + COUNT) return page(op - BASE, id, a, b, text, bytes);
+          return s.request(op, id, a, b, text, bytes);
+        };
+        const receive = (m) => {
+          switch (m[0]) {
+            case "el": events.push(m.slice(1)); return flush();
+            case "file": files.push(m.slice(1)); return flush();
+            case "where": at = m[1]; return located();
+            case "value": { const id = values.get(m[1]); values.delete(m[1]); if (id !== undefined) answer(id, 0, m[2], NONE, 0n, 0n, 0); return; }
+            case "timer": { const id = frames.get(m[1]); frames.delete(m[1]); if (id !== undefined) answer(id, 0, "", NONE, 0n, 0n, 0); return; }
+          }
+        };
+        return { request, exit: s.exit, receive };
+      };
+      const wacProgram = (post, where) => {
+        let host = null;
+        const p = wacPageServer((...a) => host.answer(...a), { child: false, args: [], cwd: "/", post: null }, post, where);
+        host = PageHost.create(System.of(p.request, p.exit));
+        host.start();
+        return p.receive;
       };
       """;
 }

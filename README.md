@@ -44,8 +44,8 @@ are unchanged — compared by the snapshots the compiler gives each component ta
 is skipped, and renders again before an event reaches it, so a handler never runs with a stale capture.
 Hooks are found by the order of the calls, which nothing checks: call them unconditionally.
 
-`TestDoc` is a document of records for tests: hand a page `doc.dom()`, `doc.attach(page)`, and fire events
-at what the view drew. `test/wac/view_test.wac` and `template/test` use it.
+`TestDoc` is a document of records for tests: `doc.page()` is a page over it, and events fired at what the
+view drew run the program on and render. `test/wac/view_test.wac` and `template/test` use it.
 
 ## The handle layer — `element.wac`
 
@@ -128,14 +128,28 @@ Nothing waits for the browser: each call that reaches it returns a ticket at onc
 calls back when the work is done. So a host ticket is `await`ed — `await cli.readFile(p).ticket()` —
 and `.wait()` on one that has not arrived traps saying so, where on a command line it would block.
 
+## A page is a capability — `wac.page`
+
+**Everything a page does is a request to the program's host** ([`src/line.wac`](src/line.wac)). The program
+finds the page by name — `Page.open(sys)` asks its host for `wac.page` in a version `^1` allows — and is
+answered with a range of request numbers, one per operation. Changes to the document are requests nobody
+answers, so they never wait; everything that comes back is an answer to a request the program made — the next
+event, the next frame, the next file handed over, an element's value, the next change of location. The clock
+and timers are `std`'s, which every host answers itself.
+
+So **whoever answers draws**: a standalone page's host into the document, a desktop into one of its windows, a
+test into records. The program cannot tell which, and one with no page — run from a command line — is told so
+by `Page.open` rather than handed one that draws nowhere. A host written in wac answers with what `line.wac`
+exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the fields.
+
 ## Testing a page without a browser
 
-`Page.create(dom)` takes a `Dom` — a struct of functions — and the host's three calls, `deliver`,
-`timerFired`, `fileArrived` and `valueArrived`, are ordinary exports. A page's `Sys` is the same: a
-`World` built from a `System` of lambdas, answered by hand with `answered` —
-[`test/wac/system_test.wac`](test/wac/system_test.wac). A test hands the program a `Dom` of lambdas that
-record what it did, and makes the calls a browser would. [`test/wac/page_test.wac`](test/wac/page_test.wac)
-does that for every order in which things can arrive.
+`TestDoc` is such a host: `doc.page()` is a page over it, every request the program makes lands in its
+records and in `doc.said`, and every answer is the test's to give — `fire` and `event` for events, `advance`
+for the clock and the sleeps it wakes, `paint` for frames, `answerValue`, `hand` and `go`.
+[`test/wac/page_test.wac`](test/wac/page_test.wac) does that for every order in which things can arrive. A
+page's `Sys` is a `World` built from a `System` of lambdas, answered by hand with `answered` —
+[`test/wac/system_test.wac`](test/wac/system_test.wac).
 
 ## Building one
 
@@ -143,14 +157,14 @@ does that for every order in which things can arrive.
         <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
-browser's side holds, with the page in a private field and a method for each call the host makes;
-`page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
-host. The host is two halves that talk by messages: the program's half makes a `Dom` whose every
-call is a message, and the document's half applies each message and sends back events, frames,
-files and values. By default the program's half runs in a worker started from the page's own text;
-`--in-page` joins the two halves directly on the page's thread. Neither half makes a decision;
-everything a page does is in `src/page.wac`. Because the page is private, none of its interior
-crosses into JavaScript: the glue is two classes, `PageHost` and `Dom`.
+browser's side holds, with the page in a private field, `start`, and `answer` for every answer the host
+gives; `page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
+host. The host is two halves that talk by messages: the program's half answers `wac.page` — each change
+the program asks for becomes a message, and each event, frame, file and value the document sends back
+answers the request waiting for it — and the document's half applies each message. By default the
+program's half runs in a worker started from the page's own text; `--in-page` joins the two halves directly
+on the page's thread. Neither half makes a decision; everything a page does is in `src/`. Because the page is
+private, none of its interior crosses into JavaScript: the glue is two classes, `PageHost` and `System`.
 
 **`--dev` is a development build**: after every turn each view renders everything again and logs, to the
 console, each place the page does not show what a component renders — which happens only when a render

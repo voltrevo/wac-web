@@ -7,8 +7,9 @@
 // names an element.
 //
 // **The program mints the handles.** A handle is a number this side chooses, and the document records
-// the element it made under it — so making and changing elements never waits. Calls go out as they are
-// made; the host batches them into one message per turn. Only reads wait, and each is a ticket.
+// the element it made under it — so making and changing elements never waits. Each change is a `wac.page`
+// request nobody answers (`line.wac`), sent as it is made; a host batches them as it likes. Only reads
+// wait, and each is a ticket.
 //
 // **A handle lives as long as its element is in the tree.** `remove` ends it and every handle under it,
 // and a call on an ended handle traps saying which. The program keeps a mirror — parents and children,
@@ -21,6 +22,8 @@
 // network grant cannot send anything anywhere even if this were wrong.
 
 import { Queue, Ticket, Vec } from "core";
+import { Answer } from "std";
+import { Happened, PageLine, happenedOf } from "./line.wac";
 
 /** What the document does with an event of a kind, decided before any event happens. */
 export struct Listen {
@@ -69,79 +72,37 @@ export struct ElementEvent {
   i32 selEnd;
 }
 
-/**
- * The document's side of the handles: one function per operation, each sent at once and answering
- * nothing. Supplied by the host, or by a test that records what it was asked.
- */
-export struct ElementOps {
-  /** Make an element `tag` as handle `id`, a child of `parent`, before `before` — or last when -1. */
-  fn<void(i32, i32, string, i32)> make;
-  /** Make a text node as handle `id`, a child of `parent`, before `before` — or last when -1. */
-  fn<void(i32, i32, string, i32)> makeText;
-  /** Replace everything under `id` with text, or set a text node's text. */
-  fn<void(i32, string)> text;
-  /** Set attribute `name` to `value`, or remove it when `present` is false. */
-  fn<void(i32, string, string, bool)> attr;
-  /**
-   * Set a property — `value`, `checked`, `selected` — unless the user has typed into it since the last
-   * event the program had seen, which `seen` numbers: a render that lags behind typing cannot undo a
-   * keystroke.
-   */
-  fn<void(i32, string, string, i32)> prop;
-  /** Move `id` before `before` within its parent, or last when -1. */
-  fn<void(i32, i32)> move;
-  /** Remove `id` and everything under it, forgetting every handle there. */
-  fn<void(i32)> remove;
-  /** Deliver `kind` events from `id` and everything under it, preventing the defaults `prevent` names. */
-  fn<void(i32, string, string)> listen;
-  /** Focus `id`. */
-  fn<void(i32)> focus;
-  /** Ask for `id`'s value; the answer comes back as `valueArrived(req, value)`. */
-  fn<void(i32, i32)> value;
-  /** Draw `rgba` — `w` by `h`, four bytes a pixel — as all of canvas `id`, sizing it to match. */
-  fn<void(i32, i32, i32, u8[])> pixels;
-  /** Draw `rgba`, `w` by `h`, into canvas `id` with its corner at `x`, `y`. */
-  fn<void(i32, i32, i32, i32, i32, u8[])> pixelsIn;
-  /** Scroll `id` into view — or, when `named` is not empty, the element under it whose `id` attribute that is. */
-  fn<void(i32, string)> scroll;
-  /** Select `start` to `end` of text field `id`, unless the user has typed into it since event `seen`, as `prop`. */
-  fn<void(i32, i32, i32, i32)> select;
-  /**
-   * Type `text` into text field `id` at its caret, replacing the selection, as a keystroke would — into the
-   * field's undo history, with an `input` event after — unless the user has typed into it since event `seen`.
-   */
-  fn<void(i32, string, i32)> typeText;
-
-  /** A document that records nothing — for a test, which replaces the functions it watches. */
-  ElementOps inert() {
-    return ElementOps(
-      (i32 id, i32 parent, string tag, i32 before) => { }, (i32 id, i32 parent, string text, i32 before) => { },
-      (i32 id, string text) => { }, (i32 id, string name, string value, bool present) => { },
-      (i32 id, string name, string value, i32 seen) => { }, (i32 id, i32 before) => { }, (i32 id) => { },
-      (i32 id, string kind, string prevent) => { }, (i32 id) => { }, (i32 req, i32 id) => { },
-      (i32 id, i32 w, i32 h, u8[] rgba) => { }, (i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) => { },
-      (i32 id, string named) => { }, (i32 id, i32 start, i32 end, i32 seen) => { }, (i32 id, string text, i32 seen) => { }
-    );
-  }
-}
-
 /** Every live handle, by id, and what the program has seen. */
 export struct Elements {
-  ElementOps ops;
+  /** Where the changes go, and the events come from. */
+  PageLine line;
   /** Each handle by its number; ended ones are null. Index 0 is the root. */
   Vec<Element?> byId;
   /** The number of the last event delivered to the program — what `prop` measures typing against. */
   i32 seen;
-  /** Each pending `value()` read, by request. */
-  Vec<Ticket<string>?> asked;
 
-  Elements create(ElementOps ops) {
+  /** The handles over `line`, the root among them, hearing the document's events from here on. */
+  Elements create(PageLine line) {
     Vec<Element?> byId = Vec.create();
-    Vec<Ticket<string>?> asked = Vec.create();
-    Elements es = Elements(ops, byId, 0, asked);
+    Elements es = Elements(line, byId, 0);
     Element root = Element.made(es, 0, "", null);
     byId.push(root);
+    es.follow();
     return es;
+  }
+
+  /**
+   * **One event asked for at a time**, and the next asked for once it is delivered: the host keeps what
+   * happens meanwhile, and a host that never answers — a page with no document — is never called back.
+   */
+  void follow(this) {
+    Elements es = this;
+    Ticket<Answer> t = this.line.event();
+    t.whenSettled(() => {
+      Happened h = happenedOf(t.value());
+      es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd);
+      es.follow();
+    });
   }
 
   Element root(this) { return this.byId.get(0)!; }
@@ -164,14 +125,6 @@ export struct Elements {
     Element? t = this.byId.get(targetId);
     if (l is null || t is null) { return; }
     l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd));
-  }
-
-  /** The answer to a `value()` read. */
-  void answered(this, i32 req, string value) {
-    if (req < 0 || req >= this.asked.len()) { return; }
-    Ticket<string>? t = this.asked.get(req);
-    this.asked.set(req, null);
-    if (t is not null) { t!.resolve(value); }
   }
 }
 
@@ -220,7 +173,7 @@ export struct Element {
     Element e = Element.made(this.es, this.es.mint(), tag, this);
     this.es.byId.set(e.id, e);
     this.place(e, at);
-    this.es.ops.make(e.id, this.id, tag, before is null ? -1 : before!.id);
+    this.es.line.make(e.id, this.id, tag, before is null ? -1 : before!.id);
     return e;
   }
 
@@ -233,7 +186,7 @@ export struct Element {
     Element e = Element.made(this.es, this.es.mint(), "", this);
     this.es.byId.set(e.id, e);
     this.place(e, at);
-    this.es.ops.makeText(e.id, this.id, text, before is null ? -1 : before!.id);
+    this.es.line.makeText(e.id, this.id, text, before is null ? -1 : before!.id);
     return e;
   }
 
@@ -242,7 +195,7 @@ export struct Element {
     this.alive("text");
     for (i32 i = 0; i < this.kids.len(); i++) { this.kids.get(i).end(); }
     this.kids.clear();
-    this.es.ops.text(this.id, s);
+    this.es.line.text(this.id, s);
   }
 
   /** Move this element before `before` within its parent, or last when null. */
@@ -254,7 +207,7 @@ export struct Element {
     p.kids.remove(from);
     i32 at = p.positionOf(before, "move");
     p.place(this, at);
-    this.es.ops.move(this.id, before is null ? -1 : before!.id);
+    this.es.line.move(this.id, before is null ? -1 : before!.id);
   }
 
   /** Remove this element and everything under it; every handle there ends. */
@@ -264,7 +217,7 @@ export struct Element {
     Element p = this.parent!;
     p.kids.remove(p.indexOfKid(this));
     this.end();
-    this.es.ops.remove(this.id);
+    this.es.line.remove(this.id);
   }
 
   // ── What it is ─────────────────────────────────────────────────────────────
@@ -273,7 +226,7 @@ export struct Element {
   void attr(this, string name, string? value) {
     this.alive("attr");
     refuseAttr("Element.attr", name, value);
-    this.es.ops.attr(this.id, name, value ?? "", value is not null);
+    this.es.line.attr(this.id, name, value ?? "", value is not null);
   }
 
   /** Set a property: `value`, `checked` (`"true"`/`"false"`) or `selected`. */
@@ -282,7 +235,7 @@ export struct Element {
     if (name != "value" && name != "checked" && name != "selected") {
       trap "Element.prop: " + name + " is not a property this sets — value, checked or selected";
     }
-    this.es.ops.prop(this.id, name, value, this.es.seen);
+    this.es.line.prop(this.id, name, value, this.es.seen);
   }
 
   /**
@@ -293,7 +246,7 @@ export struct Element {
    */
   void select(this, i32 start, i32 end) {
     this.alive("select");
-    this.es.ops.select(this.id, start, end, this.es.seen);
+    this.es.line.select(this.id, start, end, this.es.seen);
   }
 
   /**
@@ -308,18 +261,18 @@ export struct Element {
    */
   void typeText(this, string text) {
     this.alive("typeText");
-    this.es.ops.typeText(this.id, text, this.es.seen);
+    this.es.line.typeText(this.id, text, this.es.seen);
   }
 
   void focus(this) {
     this.alive("focus");
-    this.es.ops.focus(this.id);
+    this.es.line.focus(this.id);
   }
 
   /** Scroll the page until this element's top is at the top of the window, as far as it will go. */
   void scrollIntoView(this) {
     this.alive("scrollIntoView");
-    this.es.ops.scroll(this.id, "");
+    this.es.line.scroll(this.id, "");
   }
 
   /**
@@ -330,19 +283,25 @@ export struct Element {
   void scrollToId(this, string named) {
     this.alive("scrollToId");
     if (named == "") { trap "Element.scrollToId: an empty name names nothing — scrollIntoView scrolls to the element itself"; }
-    this.es.ops.scroll(this.id, named);
+    this.es.line.scroll(this.id, named);
   }
 
   /** Draw `rgba` — `w` by `h`, four bytes a pixel, row by row — as all of this canvas, sized to match. */
   void pixels(this, i32 w, i32 h, u8[] rgba) {
     this.drawable("pixels", w, h, rgba);
-    this.es.ops.pixels(this.id, w, h, rgba);
+    this.es.line.pixels(this.id, w, h, rgba);
   }
 
-  /** Draw `rgba`, `w` by `h`, into this canvas with its corner at `x`, `y`; the rest stays as it was. */
+  /**
+   * Draw `rgba`, `w` by `h`, into this canvas with its corner at `x`, `y`; the rest stays as it was. Each of
+   * the four is 0 to 65535, which is what `PAGE_PIXELS_IN` carries.
+   */
   void pixelsIn(this, i32 x, i32 y, i32 w, i32 h, u8[] rgba) {
     this.drawable("pixelsIn", w, h, rgba);
-    this.es.ops.pixelsIn(this.id, x, y, w, h, rgba);
+    if (x < 0 || y < 0 || x > 65535 || y > 65535 || w > 65535 || h > 65535) {
+      trap "Element.pixelsIn: \{x},\{y} \{w}x\{h} — each is 0 to 65535";
+    }
+    this.es.line.pixelsIn(this.id, x, y, w, h, rgba);
   }
 
   void drawable(this, string what, i32 w, i32 h, u8[] rgba) {
@@ -357,9 +316,8 @@ export struct Element {
   Ticket<string> value(this) {
     this.alive("value");
     Ticket<string> t;
-    i32 req = this.es.asked.len();
-    this.es.asked.push(t);
-    this.es.ops.value(req, this.id);
+    Ticket<Answer> a = this.es.line.value(this.id);
+    a.whenSettled(() => { t.resolve(a.value().text); });
     return t;
   }
 
@@ -379,7 +337,7 @@ export struct Element {
     }
     this.kinds.push(kind);
     this.handlers.push(handler);
-    this.es.ops.listen(this.id, kind, how.prevent);
+    this.es.line.listen(this.id, kind, how.prevent);
   }
 
   /** The next event listened for with `listen`, as a ticket. */

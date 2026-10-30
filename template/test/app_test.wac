@@ -8,8 +8,7 @@ import { main } from "../src/app.wac";
 /** What the build's wrapper does: the program run with its page as the schedule target, then rendered. */
 TestDoc started() {
   TestDoc doc = TestDoc.create();
-  Page page = Page.create(doc.dom());
-  doc.attach(page);
+  Page page = doc.page();
   schedule page.take;
   Ticket<i32> t = main(page);
   page.drain();

@@ -55,8 +55,7 @@ struct Rig {
 
   Rig create() {
     TestDoc doc = TestDoc.create();
-    Elements es = Elements.create(doc.elementOps());
-    doc.es = es;
+    Elements es = doc.elements();
     Clock clock = Clock.create();
     View view = View.create(es.root(), (i32 ms, fn<void()> f) => { clock.later(ms, f); });
     return Rig(doc, es, clock, view);

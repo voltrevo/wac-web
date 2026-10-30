@@ -53,9 +53,10 @@ Deno.test("the template builds and tests outside the repository", async () => {
     const home = `${base}/home`;
     const project = `${base}/myapp`;
 
-    // The fetch's result, from this checkout: the files git tracks, as a fetch would have them.
+    // The fetch's result, from this checkout: the files a commit would carry — tracked, and new ones not ignored.
     const checkout = `${home}/cache/git/${escapeRepo(GIT)}/${COMMIT}`;
-    const copied = await sh(`mkdir -p '${checkout}' && git ls-files -z | xargs -0 cp --parents -t '${checkout}'`, ROOT);
+    const copied = await sh(
+      `mkdir -p '${checkout}' && git ls-files -z --cached --others --exclude-standard | xargs -0 cp --parents -t '${checkout}'`, ROOT);
     assert(copied.ok, `the package is in the cache — ${copied.said}`);
     const tpl = await sh(`mkdir -p '${project}' && cp -R template/. '${project}/'`, ROOT);
     assert(tpl.ok, `the template is copied — ${tpl.said}`);

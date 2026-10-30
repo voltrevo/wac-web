@@ -1,0 +1,172 @@
+// `wac.page`: a page as requests to a host, and the program's end of them.
+//
+// **A page is a capability, not a thing the program is built around** (the desktop handover's design point 5).
+// A program finds it by name — `capability(host, "wac.page", "^1")` — and is answered with a range of request
+// numbers, one per operation below. Whoever answers them draws: a standalone page's host into the document
+// (`tools/build.wac`), a desktop into one of its windows, a test into records (`testdoc.wac`). The program
+// cannot tell which, and the same module runs under all three.
+//
+// **Changes are requests nobody answers** — `host.tell` — so making a thousand elements waits for nothing,
+// and a host batches them as it likes. **Everything that comes back is an answer** to a request the program
+// made: an element's value, the next event, the next frame, the next file handed over, the next change of
+// location. The program keeps one request outstanding for each stream (`Elements.follow`, `Page.follow`), and
+// asks again when it is answered — so a host never calls a program that did not ask, and a host that never
+// answers, which is what a page with no document is, costs nothing.
+//
+// **The clock and timers are not here.** They are `std`'s (`OP_MONOTONIC_NANOS`, `OP_SLEEP_MILLIS`), which every
+// host answers itself: a program in a desktop's window sleeps on its own host, not through the desktop.
+//
+// Each operation's fields, in `a`, `b`, `text` and `bytes`. A handle is an `i32` in `a`'s low half; an operation
+// that must not land over typing the program has not seen (`prop`, `select`, `typeText`) carries the number of
+// the last event the program saw in `a`'s high half. Two `i32`s in one field are `pair(high, low)`.
+
+import { Answer, Host, ask } from "std";
+import { Ticket } from "core";
+
+/** The capability's name, and the version this package speaks. */
+export string PAGE_CAPABILITY() { return "wac.page"; }
+export string PAGE_VERSION() { return "1.0.0"; }
+
+/** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
+export static i32 PAGE_MAKE = 0;
+/** `a` handle, `b` pair(parent, before), `text` the text. */
+export static i32 PAGE_MAKE_TEXT = 1;
+/** `a` handle, `text`: everything under it replaced with text, or a text node's text. */
+export static i32 PAGE_TEXT = 2;
+/** `a` handle, `b` 1 to set and 0 to remove, `text` name, `bytes` value. */
+export static i32 PAGE_ATTR = 3;
+/** `a` pair(seen, handle), `text` name — `value`, `checked` or `selected` — `bytes` value. */
+export static i32 PAGE_PROP = 4;
+/** `a` handle, `b` the handle to go before, -1 for last. */
+export static i32 PAGE_MOVE = 5;
+/** `a` handle: it and everything under it go, and their handles with them. */
+export static i32 PAGE_REMOVE = 6;
+/** `a` handle, `text` kind, `bytes` the defaults to prevent (`Listen.prevent`). */
+export static i32 PAGE_LISTEN = 7;
+/** `a` handle. */
+export static i32 PAGE_FOCUS = 8;
+/** `a` handle → `text`: its value as the document has it now. */
+export static i32 PAGE_VALUE = 9;
+/** `a` handle, `b` pair(w, h), `bytes` rgba: all of a canvas, sized to match. */
+export static i32 PAGE_PIXELS = 10;
+/** `a` handle, `b` four 16-bit fields x, y, w, h from the top, `bytes` rgba: a corner of a canvas. */
+export static i32 PAGE_PIXELS_IN = 11;
+/** `a` handle, `text` the `id` attribute of an element under it to scroll to, or `""` for the element itself. */
+export static i32 PAGE_SCROLL = 12;
+/** `a` pair(seen, handle), `b` pair(start, end): a text field's selection. */
+export static i32 PAGE_SELECT = 13;
+/** `a` pair(seen, handle), `text`: typed into a text field at its caret. */
+export static i32 PAGE_TYPE_TEXT = 14;
+/** `text`: the page's title. */
+export static i32 PAGE_TITLE = 15;
+/** `text`: a line for the console. */
+export static i32 PAGE_LOG = 16;
+/** `text` name, `bytes`: offered to the user as a file. */
+export static i32 PAGE_DOWNLOAD = 17;
+/**
+ * → the next event on an element the program listens to: `n` pair(listener, target), `m` pair(x, y), `flags` the
+ * modifier bits, `text` the value, `bytes` twelve bytes — the event's number, the caret's start and end, each a
+ * little-endian `i32` — then the kind.
+ */
+export static i32 PAGE_EVENT = 18;
+/** → the next file the user hands over: `text` its name, `bytes` its contents — or, with `flags` 1, why it could not be read. */
+export static i32 PAGE_FILE = 19;
+/** → nothing, before the next paint. */
+export static i32 PAGE_FRAME = 20;
+/** `text` the location the program knows → `text` the location, once it is not that: the hash, without its `#`. */
+export static i32 PAGE_LOCATION = 21;
+/** How many request numbers the capability takes. */
+export static i32 PAGE_COUNT = 22;
+
+/** Two `i32`s in one `i64`: `high` in the top half. */
+export i64 pair(i32 high, i32 low) { return ((high as i64) << 32) | ((low as i64) & (4294967295 as i64)); }
+export i32 highOf(i64 v) { return (v >> 32) as~ i32; }
+export i32 lowOf(i64 v) { return (v & (4294967295 as i64)) as~ i32; }
+
+/** Four 16-bit fields in one `i64`, `x` at the top — `PAGE_PIXELS_IN`'s corner and size. */
+export i64 quad(i32 x, i32 y, i32 w, i32 h) {
+  return ((x as i64) << 48) | ((y as i64) << 32) | ((w as i64) << 16) | (h as i64);
+}
+export i32 quadAt(i64 v, i32 k) { return ((v >> ((48 - 16 * k) as i64)) & (65535 as i64)) as~ i32; }
+
+/** Something that happened on an element, as the document said it. */
+export struct Happened {
+  i32 seq;
+  string kind;
+  i32 target;
+  i32 listener;
+  string value;
+  i32 x;
+  i32 y;
+  i32 mods;
+  i32 selStart;
+  i32 selEnd;
+}
+
+void putI32(u8[] b, i32 at, i32 v) {
+  for (i32 k = 0; k < 4; k++) { b[at + k] = ((v >> (8 * k)) & 255) as~ u8; }
+}
+
+i32 getI32(u8[] b, i32 at) {
+  i32 v = 0;
+  for (i32 k = 0; k < 4; k++) { v = v | ((b[at + k] as i32) << (8 * k)); }
+  return v;
+}
+
+/** An event as `PAGE_EVENT` answers it — for a host written in wac, which is a desktop or a test. */
+export Answer eventAnswer(Happened h) {
+  u8[] kind = h.kind.toBytes();
+  u8[] b = u8[].filled(12 + kind.len(), 0 as u8);
+  putI32(b, 0, h.seq);
+  putI32(b, 4, h.selStart);
+  putI32(b, 8, h.selEnd);
+  b.copyFrom(kind, 0, 12, kind.len());
+  return Answer(0, h.value, b, pair(h.listener, h.target), pair(h.x, h.y), h.mods);
+}
+
+/** `PAGE_EVENT`'s answer read back. A short one is a host's mistake, and reads as an event nobody listens to. */
+export Happened happenedOf(Answer a) {
+  if (a.bytes.len() < 12) { return Happened(0, "", 0 - 1, 0 - 1, "", 0, 0, 0, 0 - 1, 0 - 1); }
+  u8[] k = u8[].filled(a.bytes.len() - 12, 0 as u8);
+  k.copyFrom(a.bytes, 12, 0, k.len());
+  string kind = string.fromBytes(k);
+  return Happened(getI32(a.bytes, 0), kind, lowOf(a.n), highOf(a.n), a.text, highOf(a.m), lowOf(a.m), a.flags,
+                  getI32(a.bytes, 4), getI32(a.bytes, 8));
+}
+
+/** The program's end of `wac.page`: the host, and where the capability's numbers start. */
+export struct PageLine {
+  Host host;
+  i32 base;
+
+  void tell(this, i32 op, i64 a, i64 b, string text, u8[] bytes) { this.host.tell(this.base + op, a, b, text, bytes); }
+  Ticket<Answer> ask(this, i32 op, i64 a, i64 b, string text, u8[] bytes) { return ask(this.host, this.base + op, a, b, text, bytes); }
+
+  void make(this, i32 id, i32 parent, string tag, i32 before) { this.tell(PAGE_MAKE, id as i64, pair(parent, before), tag, u8[]()); }
+  void makeText(this, i32 id, i32 parent, string text, i32 before) {
+    this.tell(PAGE_MAKE_TEXT, id as i64, pair(parent, before), text, u8[]());
+  }
+  void text(this, i32 id, string text) { this.tell(PAGE_TEXT, id as i64, 0 as i64, text, u8[]()); }
+  void attr(this, i32 id, string name, string value, bool present) {
+    this.tell(PAGE_ATTR, id as i64, (present ? 1 : 0) as i64, name, value.toBytes());
+  }
+  void prop(this, i32 id, string name, string value, i32 seen) { this.tell(PAGE_PROP, pair(seen, id), 0 as i64, name, value.toBytes()); }
+  void move(this, i32 id, i32 before) { this.tell(PAGE_MOVE, id as i64, before as i64, "", u8[]()); }
+  void remove(this, i32 id) { this.tell(PAGE_REMOVE, id as i64, 0 as i64, "", u8[]()); }
+  void listen(this, i32 id, string kind, string prevent) { this.tell(PAGE_LISTEN, id as i64, 0 as i64, kind, prevent.toBytes()); }
+  void focus(this, i32 id) { this.tell(PAGE_FOCUS, id as i64, 0 as i64, "", u8[]()); }
+  void pixels(this, i32 id, i32 w, i32 h, u8[] rgba) { this.tell(PAGE_PIXELS, id as i64, pair(w, h), "", rgba); }
+  void pixelsIn(this, i32 id, i32 x, i32 y, i32 w, i32 h, u8[] rgba) { this.tell(PAGE_PIXELS_IN, id as i64, quad(x, y, w, h), "", rgba); }
+  void scroll(this, i32 id, string named) { this.tell(PAGE_SCROLL, id as i64, 0 as i64, named, u8[]()); }
+  void select(this, i32 id, i32 start, i32 end, i32 seen) { this.tell(PAGE_SELECT, pair(seen, id), pair(start, end), "", u8[]()); }
+  void typeText(this, i32 id, string text, i32 seen) { this.tell(PAGE_TYPE_TEXT, pair(seen, id), 0 as i64, text, u8[]()); }
+  void title(this, string t) { this.tell(PAGE_TITLE, 0 as i64, 0 as i64, t, u8[]()); }
+  void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
+  void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }
+
+  Ticket<Answer> value(this, i32 id) { return this.ask(PAGE_VALUE, id as i64, 0 as i64, "", u8[]()); }
+  Ticket<Answer> event(this) { return this.ask(PAGE_EVENT, 0 as i64, 0 as i64, "", u8[]()); }
+  Ticket<Answer> file(this) { return this.ask(PAGE_FILE, 0 as i64, 0 as i64, "", u8[]()); }
+  Ticket<Answer> frame(this) { return this.ask(PAGE_FRAME, 0 as i64, 0 as i64, "", u8[]()); }
+  Ticket<Answer> location(this, string known) { return this.ask(PAGE_LOCATION, 0 as i64, 0 as i64, known, u8[]()); }
+}
