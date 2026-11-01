@@ -144,6 +144,11 @@ test into records. The program cannot tell which, and one with no page — run f
 by `Page.open` rather than handed one that draws nowhere. A host written in wac answers with what `line.wac`
 exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the fields.
 
+**A page served into an element of another page** — `PageServer` (`src/serve.wac`), a desktop's window — should be
+served into that element's shadow root, `element.shadow()`: its stylesheets then apply in that element and
+nowhere else, in neither direction, so the page around it cannot restyle what it draws, nor it the page around
+it. The page's own stylesheet names its variables on `:host` as well as `:root`, which matches nothing there.
+
 ## The site a page came from — `wac.site`
 
 `Site.of(sys)` is the site the page was served from, and `site.get(path)` a GET of a path under the page's folder —

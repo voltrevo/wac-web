@@ -1065,7 +1065,10 @@ export string documentSide() {
         // the program sends without having seen that event is older than what the user typed, and dropped.
         let seq = 0;
         const numbered = (ev) => (ev.__wacSeq ??= ++seq);
-        root.addEventListener("input", (ev) => { ev.target.__wacTyped = numbered(ev); }, true);
+        // **Where an event began**, inside a shadow root too: `target` is retargeted to the shadow root's host for a
+        // listener outside it, and the text field typed into is the one that matters (`Element.shadow`).
+        const origin = (ev) => (ev.composedPath ? ev.composedPath()[0] : ev.target) ?? ev.target;
+        root.addEventListener("input", (ev) => { origin(ev).__wacTyped = numbered(ev); }, true);
         const place = (parent, n, before) => {
           const p = nodes.get(parent);
           if (p) p.insertBefore(n, before < 0 ? null : (nodes.get(before) ?? null));
@@ -1082,7 +1085,9 @@ export string documentSide() {
         // Where in the element the pointer is, in the element's own pixels: a canvas's backing store
         // rather than its size on screen, so a scaled canvas still answers in the units it is drawn in.
         const within = (el, ev) => {
-          if (ev.clientX === undefined) return [0, 0];
+          // A shadow root has no box of its own: its host's is where it is drawn.
+          if (!el.getBoundingClientRect && el.host) el = el.host;
+          if (ev.clientX === undefined || !el.getBoundingClientRect) return [0, 0];
           const r = el.getBoundingClientRect();
           const sx = el.width !== undefined && r.width > 0 ? el.width / r.width : 1;
           const sy = el.height !== undefined && r.height > 0 ? el.height / r.height : 1;
@@ -1090,6 +1095,17 @@ export string documentSide() {
         };
         const ops = {
           make: (id, parent, tag, before) => {
+            // `#shadow` is the parent's shadow root, opened — a page of its own inside it (`Element.shadow`).
+            if (tag === "#shadow") {
+              const host = nodes.get(parent);
+              if (!host || !host.attachShadow) return;
+              const sr = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+              // `input` crosses the shadow root's edge to the listener on the root; `change` does not, so a file
+              // chosen in there is heard here.
+              sr.addEventListener("change", (ev) => changed(ev));
+              nodes.set(id, sr); handleOf.set(sr, id);
+              return;
+            }
             const el = document.createElement(tag);
             nodes.set(id, el); handleOf.set(el, id); place(parent, el, before);
           },
@@ -1106,7 +1122,7 @@ export string documentSide() {
           },
           attr: (id, name, value, present) => {
             const n = nodes.get(id);
-            if (n) { if (present) n.setAttribute(name, value); else n.removeAttribute(name); }
+            if (n && n.setAttribute) { if (present) n.setAttribute(name, value); else n.removeAttribute(name); }
           },
           prop: (id, name, value, seen) => {
             const n = nodes.get(id);
@@ -1127,7 +1143,8 @@ export string documentSide() {
           typeText: (id, text, seen) => {
             const n = nodes.get(id);
             if (!n || (n.__wacTyped ?? 0) > seen) return;
-            if (n !== document.activeElement && n.focus) n.focus();
+            const active = n.getRootNode ? n.getRootNode().activeElement : document.activeElement;
+            if (n !== active && n.focus) n.focus();
             if (document.execCommand && document.execCommand("insertText", false, text)) return;
             if (!n.setRangeText) return;
             n.setRangeText(text, n.selectionStart, n.selectionEnd, "end");
@@ -1164,7 +1181,8 @@ export string documentSide() {
             });
             n.addEventListener(kind, (ev) => {
               let t = ev.target;
-              while (t && t !== n && !handleOf.has(t)) t = t.parentNode;
+              // Inside a shadow root, `parentNode` stops at the root, whose host is the next node out.
+              while (t && t !== n && !handleOf.has(t)) t = t.parentNode ?? t.host;
               if (!t || !handleOf.has(t)) return;
               const keyed = kind === "keydown" || kind === "keyup";
               if (prevent === "*" || kind === "submit" || (keyed && keyMatches(ev))) ev.preventDefault();
@@ -1267,7 +1285,8 @@ export string documentSide() {
             else walk(entries[i]);
           });
         };
-        root.addEventListener("change", (ev) => { if (ev.target?.files) take(ev.target.files); });
+        const changed = (ev) => { const t = origin(ev); if (t?.files) take(t.files); };
+        root.addEventListener("change", changed);
         // A link to `#/somewhere`, and the browser's back and forward, move the location; the program follows.
         addEventListener("hashchange", () => emit(["where", location.hash]));
         // Without preventing dragover a dropped file replaces the page.

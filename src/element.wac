@@ -177,6 +177,24 @@ export struct Element {
     return e;
   }
 
+  /**
+   * **A shadow root on this element: a page of its own inside it.** What is made under the handle it answers is drawn
+   * in this element, and a stylesheet there applies there and nowhere else — in neither direction, so the page
+   * around it cannot restyle what is inside, and what is inside cannot restyle the page around it. For a program
+   * that draws another program's page into one of its elements: a desktop's window, served by `PageServer`.
+   *
+   * Asked of an element by this program, never by a page it serves: `#shadow` is no element name, so `PageServer`
+   * refuses it from a child as it refuses any other.
+   */
+  Element shadow(this) {
+    this.alive("shadow");
+    if (this.tag == "" && this.id != 0) { trap "Element.shadow: a text node has no shadow root"; }
+    Element e = Element.made(this.es, this.es.mint(), "#shadow", this);
+    this.es.byId.set(e.id, e);
+    this.es.line.make(e.id, this.id, "#shadow", -1);
+    return e;
+  }
+
   /** A text child the program can change later, last, or before `before`. */
   Element appendText(this, string text) { return this.insertText(text, null); }
 

@@ -95,11 +95,15 @@ struct ChildHost {
   }
 }
 
-Rig rig() {
+Rig rig() { return rigIn(false); }
+
+/** A desktop with one window, its child's page served into the window — or into its shadow root, when `shadow`. */
+Rig rigIn(bool shadow) {
   TestDoc doc = TestDoc.create();
   Page desk = doc.page();
   Element window = desk.root().append("div");
-  Rig r = Rig(doc, desk, window, PageServer.into(desk, window, (string t) => { }, (string l) => { }), desk, "", null);
+  Element into = shadow ? window.shadow() : window;
+  Rig r = Rig(doc, desk, window, PageServer.into(desk, into, (string t) => { }, (string l) => { }), desk, "", null);
   Rig me = r;
   r.server.onTitle = (string t) => { me.title = t; };
   ChildHost c = ChildHost(r.server, null, null, 0, Vec.create(), "");
@@ -180,6 +184,26 @@ export string test_a_file_handed_to_the_window_is_the_childs_next_file() {
   r.server.hand(false, "b.bin", "NotReadableError".toBytes());
   t.isTrue(got.settled(), "the second answered what was waiting");
   t.eqStr(got.value(), "a.txt=hi;b.bin failed: NotReadableError", "both, in order, the second saying why it failed");
+  return t.report();
+}
+
+/**
+ * **A window's page in a shadow root of its own** draws in the window as any page does — the desktop's stylesheet
+ * and the child's each apply only on their side (`Element.shadow`, a browser's to enforce).
+ */
+export string test_a_child_draws_in_its_windows_shadow_root() {
+  Check t = Check.create();
+  Rig r = rigIn(true);
+  schedule r.child.take;
+  r.child.mount((Ui ui) => <Counter/>);
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf(" #shadow\n") >= 0, "the window was given a shadow root: " + r.doc.said);
+  t.eqStr(r.doc.shown(r.window.id), "Clicks: 0 +1", "the child drew inside the window");
+  i32 up = r.doc.find("id", "up");
+  r.doc.fire(up, "click", "");
+  t.eqStr(r.doc.shown(r.window.id), "Clicks: 1 +1", "and hears what happens there");
+  t.eqI32(r.server.refused.len(), 0, "nothing was refused");
   return t.report();
 }
 
