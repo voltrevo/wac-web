@@ -3,10 +3,14 @@
 A page written entirely in wac: `src/app.wac` is the application, and `wac task build` makes it one
 `dist/index.html` that runs in any browser — open the file, or serve it with any static server.
 
-    wac update          # fetch the `web` package this project depends on, once
+    wac update          # fetch the `web` package this project depends on, once — see below
     wac task build      # src/app.wac -> dist/index.html
     wac task serve      # http://localhost:8080
     wac task test       # the application, driven without a browser
+
+**Where `wac update` is refused** — git.voltrevo.com answers wac's own fetcher 401, since it has no credentials
+there and `git` does — put the locked commit in wac's package cache with `git` instead: wac's
+`tools/fill-cache.sh`, copied into this project's `tools/`, reads `wac.lock` and does it.
 
 ## How a page works
 

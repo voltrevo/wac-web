@@ -55,4 +55,7 @@ of the desktop (step 2 of the handover in `https://git.voltrevo.com/notes.git`,
   provides the capability — and `PageServer` (`src/serve.wac`) answers `wac.page` into an `Element` this program
   holds, refusing a child's mistakes rather than trapping on them. `Procs.spawnProviding` with `server.provider()`
   is a page's program in a window; wac-desktop's `src/desk/program.wac` does it.
-- **Next:** files a window hands its program (drops, a picker), and grants (the handover's design point 6).
+- **Done:** `Desktop.of(sys)` (`src/desktop.wac`), the client of `wac.desktop` — the picker, `open`, `note`, the
+  clipboard — which wac-desktop serves; `PageServer.hand`, a file handed to a window's program.
+- **Next:** a program opening windows of its own — a `wac.desktop` request that answers a page — rather than the
+  one the desktop gives it at launch.
