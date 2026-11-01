@@ -60,5 +60,6 @@ of the desktop (step 2 of the handover in `https://git.voltrevo.com/notes.git`,
 - **Done:** `Desktop.openWindow` (a window's page is its slice of `wac.page`), `Desktop.askFor` (more than a
   program is handed, asked for once), and `wac.site` (`src/site.wac`): the page's own site, read a file at a time or
   as read-only files over the `index.json` its build writes (`tools/index.wac`). The browser's host answers it.
-- **Next:** the desktop's programs living on its site — the built-in apps as modules there — and a program's
-  description of itself, which needs a section wac's builder does not write yet.
+- **Done:** `Desktop.edit` (a file shown in the desktop's editor) and `Desktop.newFile` (a free name on the desktop,
+  which the program may write): what the desktop's own viewer and editor need, now programs on its site.
+- **Next:** a program's description of itself, which needs a section wac's builder does not write yet.

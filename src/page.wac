@@ -51,7 +51,7 @@ export { TestDoc, TestNode } from "./testdoc.wac";
 export { PageServer } from "./serve.wac";
 // `wac.desktop`, for a program a desktop started: `Desktop.of(sys)`.
 export { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
-         DESKTOP_VERSION, DESKTOP_WINDOW, DESKTOP_ASK, Desktop } from "./desktop.wac";
+         DESKTOP_VERSION, DESKTOP_WINDOW, DESKTOP_ASK, DESKTOP_NEW, Desktop } from "./desktop.wac";
 // `wac.site`: the site a page was served from, read a file at a time, or mounted read-only as files.
 export { SITE_CAPABILITY, SITE_COUNT, SITE_GET, SITE_VERSION, Site, siteFiles } from "./site.wac";
 

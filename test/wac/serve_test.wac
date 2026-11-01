@@ -7,7 +7,7 @@
 import { Check } from "./check.wac";
 import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
          PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
 /** Where the child's host numbers `wac.page`, and `wac.desktop`. */
@@ -50,6 +50,15 @@ struct ChildHost {
       this.otherSlices = this.otherSlices + "\{k / PAGE_COUNT}:\{k % PAGE_COUNT};";
       // A batch is answered at once; the requests a page keeps open — its next event, its location — wait.
       if (k % PAGE_COUNT == PAGE_BATCH) { this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); }
+      return;
+    }
+    if (op == DESK + DESKTOP_OPEN) {
+      this.otherSlices = this.otherSlices + "open \{a}:\{text};";
+      this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0));
+      return;
+    }
+    if (op == DESK + DESKTOP_NEW) {
+      this.give(id, Answer(0, "/Desktop/" + text, u8[](), 0 as i64, 0 as i64, 0));
       return;
     }
     if (op == DESK + DESKTOP_PICK) {
@@ -195,6 +204,31 @@ export string test_a_program_finds_the_desktop_that_started_it_and_picks_with_it
   run.drain();
   t.isTrue(got.settled(), "both picks were answered");
   t.eqStr(got.value(), "Desktop/notes.txt;nothing was chosen", "a path, then nothing chosen");
+  return t.report();
+}
+
+async string opensEditsAndMakes(Sys sys) {
+  match (await Desktop.of(sys)) {
+    Ok(d): {
+      await d.open("/Desktop/a.md");
+      await d.edit("/Desktop/a.md");
+      Result<string, string> made = await d.newFile("Untitled.txt");
+      return made.isOk() ? made.ok()! : made.err()!;
+    }
+    Err(why): { return "no desktop: " + why; }
+  }
+}
+
+export string test_a_program_opens_a_file_to_show_or_to_edit_and_asks_for_a_new_one() {
+  Check t = Check.create();
+  Rig r = rig();
+  Runner run = Runner.create();
+  schedule run.take;
+  Ticket<string> got = opensEditsAndMakes(r.child.sys);
+  run.drain();
+  t.isTrue(got.settled(), "all three were answered");
+  t.eqStr(r.host!.otherSlices, "open 0:/Desktop/a.md;open 1:/Desktop/a.md;", "shown, then as text to edit");
+  t.eqStr(got.value(), "/Desktop/Untitled.txt", "and the new file's path is the desktop's answer");
   return t.report();
 }
 

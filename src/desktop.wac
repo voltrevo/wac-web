@@ -15,8 +15,9 @@
 // program — the next time it starts it holds what it was allowed, and is not asked again.
 //
 // **The picker is the grant.** `pick` shows the person the desktop's files; what they choose is answered as a path
-// the program's `Files` can now read — and nothing else it could not before. `open` shows a path in the desktop's
-// app for it; `note` says something in the desktop's own voice; `copy` and `paste` are the desktop's clipboard,
+// the program's `Files` can now read — and nothing else it could not before. So is `newFile`: a free name on the
+// desktop, which the program may write and nothing beside it. `open` shows a path in the desktop's app for it, and
+// `edit` in its editor; `note` says something in the desktop's own voice; `copy` and `paste` are the desktop's clipboard,
 // which is text.
 //
 // Each request's fields, as `line.wac` gives `wac.page`'s. The desktop answers every request, `note` and `copy`
@@ -32,7 +33,10 @@ export string DESKTOP_VERSION() { return "1.0.0"; }
 
 /** `text` what the person is choosing for → `text` the path chosen; `flags` 1 when they chose nothing. */
 export static i32 DESKTOP_PICK = 0;
-/** `text` a path the program may read → shown in the desktop's app for it; a fault when it may not. */
+/**
+ * `text` a path the program may read → shown in the desktop's app for it — `a` 1: as text, in its editor; a fault
+ * when it may not.
+ */
 export static i32 DESKTOP_OPEN = 1;
 /** `text`: said in the desktop's note. */
 export static i32 DESKTOP_NOTE = 2;
@@ -50,8 +54,13 @@ export static i32 DESKTOP_WINDOW = 5;
  * desktop asks the person once and remembers their answer for this program.
  */
 export static i32 DESKTOP_ASK = 6;
+/**
+ * `text` a name → `text` a path on the desktop for a new file of that name — or the first free name like it — which
+ * the program may write from now on. Nothing is there until it writes it.
+ */
+export static i32 DESKTOP_NEW = 7;
 /** How many request numbers the capability takes. */
-export static i32 DESKTOP_COUNT = 7;
+export static i32 DESKTOP_COUNT = 8;
 
 /** The desktop that started this program: its host, and where the capability's numbers start on it. */
 export struct Desktop {
@@ -85,6 +94,23 @@ export struct Desktop {
     Answer a = await this.ask(DESKTOP_OPEN, path);
     if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
     return Result.Ok();
+  }
+
+  /** Show `path` as text, in the desktop's editor. `Err` when this program may not read it. */
+  async Result<void, string> edit(this, string path) {
+    Answer a = await ask(this.sys.host, this.base + DESKTOP_OPEN, 1 as i64, 0 as i64, path, u8[]());
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    return Result.Ok();
+  }
+
+  /**
+   * Somewhere on the desktop for a new file named `name`: its path, which this program may write from now on — the
+   * name as asked, or the first free one like it. `Err` saying why not.
+   */
+  async Result<string, string> newFile(this, string name) {
+    Answer a = await this.ask(DESKTOP_NEW, name);
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    return Result.Ok(a.text);
   }
 
   /** Say `text` in the desktop's note. */
