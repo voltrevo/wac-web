@@ -94,8 +94,9 @@ export static i32 PAGE_ONE_AT_A_TIME = 1;
 
 /** Two `i32`s in one `i64`: `high` in the top half. */
 export i64 pair(i32 high, i32 low) { return ((high as i64) << 32) | ((low as i64) & (4294967295 as i64)); }
-export i32 highOf(i64 v) { return (v >> 32) as~ i32; }
-export i32 lowOf(i64 v) { return (v & (4294967295 as i64)) as~ i32; }
+// `as@` keeps the bits: a half that was -1 comes back -1, where `as~` would give the nearest `i32` to 4294967295.
+export i32 highOf(i64 v) { return (v >> 32) as@ i32; }
+export i32 lowOf(i64 v) { return v as@ i32; }
 
 /** Four 16-bit fields in one `i64`, `x` at the top — `PAGE_PIXELS_IN`'s corner and size. */
 export i64 quad(i32 x, i32 y, i32 w, i32 h) {

@@ -412,10 +412,20 @@ export bool runsOnItsOwn(string tag) {
       || tag == "portal";
 }
 
+/**
+ * Why a page may not make element `tag`, or `""` when it may. **Words rather than a trap**, for whoever is asked by
+ * someone else — a host answering a child's `wac.page`, which must refuse a child's mistake and go on.
+ */
+export string whyNotTag(string tag) {
+  if (!lowerName(tag, false)) { return tag + " is not an element name — [a-z][a-z0-9-]*"; }
+  if (runsOnItsOwn(tag)) { return "a page cannot make a " + tag + " element"; }
+  return "";
+}
+
 /** Trap, naming `who` — the call refusing — unless `tag` is an element a page may make. */
 export void refuseTag(string who, string tag) {
-  if (!lowerName(tag, false)) { trap who + ": " + tag + " is not an element name — [a-z][a-z0-9-]*"; }
-  if (runsOnItsOwn(tag)) { trap who + ": a page cannot make a " + tag + " element"; }
+  string why = whyNotTag(tag);
+  if (why != "") { trap who + ": " + why; }
 }
 
 /** The attributes whose value is a URL a browser follows. */
@@ -444,10 +454,17 @@ export bool scriptUrl(string v) {
   return k == w.len();
 }
 
+/** Why a page may not set attribute `name` to `value`, or `""` when it may — `whyNotTag`'s companion. */
+export string whyNotAttr(string name, string? value) {
+  if (!lowerName(name, true)) { return name + " is not an attribute name — [a-z][a-z0-9-]*"; }
+  if (name.len() >= 2 && name.slice(0, 2) == "on") { return name + " — a handler is listened for, not written"; }
+  if (name == "srcdoc") { return "srcdoc writes a document"; }
+  if (value is not null && urlAttr(name) && scriptUrl(value!)) { return name + " is a javascript: URL"; }
+  return "";
+}
+
 /** Trap, naming `who`, unless `name` set to `value` is an attribute a page may write. */
 export void refuseAttr(string who, string name, string? value) {
-  if (!lowerName(name, true)) { trap who + ": " + name + " is not an attribute name — [a-z][a-z0-9-]*"; }
-  if (name.len() >= 2 && name.slice(0, 2) == "on") { trap who + ": " + name + " — a handler is listened for, not written"; }
-  if (name == "srcdoc") { trap who + ": srcdoc writes a document"; }
-  if (value is not null && urlAttr(name) && scriptUrl(value!)) { trap who + ": " + name + " is a javascript: URL"; }
+  string why = whyNotAttr(name, value);
+  if (why != "") { trap who + ": " + why; }
 }

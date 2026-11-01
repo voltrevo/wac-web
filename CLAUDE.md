@@ -51,7 +51,8 @@ of the desktop (step 2 of the handover in `https://git.voltrevo.com/notes.git`,
   host answering it, and the browser host answering it (`wacPageServer` in `tools/build.wac`). A page's program
   is a plain module (`moduleFor`): built by `wac build`, driven from its manifest like any module (`wacRun`),
   rendering on `Page.changed`. The bindgen wrapper, `PageHost`, `Spawned` and `system.wac` are gone.
-- **Next:** the desktop starting a page's `page.wasm` and answering its `wac.page` into a window —
-  `Procs.spawnProviding` with a `Provider` for `wac.page` whose answers draw into an `Element` the desktop holds.
-  That is wac-desktop's step 3 (`wac.desktop` and windows); a `Provider` written in wac answers with what
-  `line.wac` exports.
+- **Done, for the desktop:** changes travel as one `PAGE_BATCH` a turn — a request, so it reaches a parent that
+  provides the capability — and `PageServer` (`src/serve.wac`) answers `wac.page` into an `Element` this program
+  holds, refusing a child's mistakes rather than trapping on them. `Procs.spawnProviding` with `server.provider()`
+  is a page's program in a window; wac-desktop's `src/desk/program.wac` does it.
+- **Next:** files a window hands its program (drops, a picker), and grants (the handover's design point 6).

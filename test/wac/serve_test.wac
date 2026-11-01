@@ -1,0 +1,127 @@
+// A page drawn into another page's element: a child's `wac.page` answered by a `PageServer`, with no process
+// between them — the child's host hands each request straight to the server, as a desktop's channel would carry it.
+//
+// The desktop's page is a `TestDoc`, so what the child drew can be read off its records and events fired at it; the
+// child holds its changes and sends them together, as a child of a real host does.
+
+import { Check } from "./check.wac";
+import { Ticket } from "core";
+import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
+import { Element, ElementEvent, Node, PAGE_COUNT, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+         PageServer, TestDoc, Ui, html.b, html.button, html.p, pair } from "../../src/page.wac";
+
+/** Where the child's host numbers `wac.page`. */
+static i32 BASE = 8192;
+
+/** The desktop's document and page, the window the child draws in, the server, and the child's page. */
+struct Rig {
+  TestDoc doc;
+  Page desk;
+  Element window;
+  PageServer server;
+  Page child;
+  string title;
+}
+
+/** A child whose requests are answered by `server`: inside the request when the answer is ready, later otherwise. */
+struct ChildHost {
+  PageServer server;
+  Host? host;
+  Page? page;
+  i32 asking;
+
+  void request(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+    if (op == OP_CAPABILITY()) {
+      this.give(id, Answer(0, PAGE_VERSION(), u8[](), BASE as i64, PAGE_COUNT as i64, 0));
+      return;
+    }
+    if (op == OP_MONOTONIC_NANOS()) {
+      this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0));
+      return;
+    }
+    if (op < BASE || op >= BASE + PAGE_COUNT) { return; }
+    Ticket<Answer> t = this.server.answer(op - BASE, a, b, text, bytes);
+    ChildHost me = this;
+    t.whenSettled(() => { me.give(id, t.value()); });
+  }
+
+  /** An answer: settled where it stands inside a request, and run on — the child's turn — from outside one. */
+  void give(this, i32 id, Answer x) {
+    if (id == 0) { return; }
+    if (this.asking > 0 || this.page is null) {
+      answered(this.host!, id, x.fault, x.text, x.bytes, x.n, x.m, x.flags);
+      return;
+    }
+    Page p = this.page!;
+    schedule p.take;
+    answered(this.host!, id, x.fault, x.text, x.bytes, x.n, x.m, x.flags);
+    p.drain();
+    p.turn();
+  }
+}
+
+Rig rig() {
+  TestDoc doc = TestDoc.create();
+  Page desk = doc.page();
+  Element window = desk.root().append("div");
+  Rig r = Rig(doc, desk, window, PageServer.into(desk, window, (string t) => { }, (string l) => { }), desk, "");
+  Rig me = r;
+  r.server.onTitle = (string t) => { me.title = t; };
+  ChildHost c = ChildHost(r.server, null, null, 0);
+  Host h = Host.of(
+    (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+      c.asking++;
+      c.request(op, id, a, b, text, bytes);
+      c.asking--;
+    },
+    (i32[] ids, i32 millis) => millis == 0 ? 0 - 1 : HOST_CANNOT_WAIT(),
+    (i32 code) => { },
+    () => false);
+  c.host = h;
+  Page child = Page.over(PageLine.of(h, BASE, 0), Sys.__wacOn(h));
+  c.page = child;
+  r.child = child;
+  return r;
+}
+
+Node Counter(Ui ui) {
+  auto n = ui.state(0);
+  return <p>Clicks: <b id="count">{"\{n.get()}"}</b> <button id="up" onclick={(ElementEvent e) => { n.set(n.get() + 1); }}>+1</button></p>;
+}
+
+export string test_a_child_draws_in_its_window_and_hears_what_happens_there() {
+  Check t = Check.create();
+  Rig r = rig();
+  schedule r.child.take;
+  r.child.title("Counter");
+  r.child.mount((Ui ui) => <Counter/>);
+  r.child.turn();
+  t.eqStr(r.title, "Counter", "the child's title is the window's");
+  t.eqStr(r.doc.shown(r.window.id), "Clicks: 0 +1", "the child drew inside the window");
+  t.eqStr(r.doc.shown(0), "Clicks: 0 +1", "and nowhere else");
+  i32 up = r.doc.find("id", "up");
+  t.isTrue(up >= 0, "its button is in the desktop's document");
+  r.doc.fire(up, "click", "");
+  t.eqStr(r.doc.shown(r.window.id), "Clicks: 1 +1", "a click there ran the child's handler, and it drew again");
+  t.eqI32(r.server.refused.len(), 0, "nothing was refused: " + (r.server.refused.len() > 0 ? r.server.refused.get(0) : ""));
+  return t.report();
+}
+
+export string test_what_a_child_may_not_do_is_refused_and_the_desktop_goes_on() {
+  Check t = Check.create();
+  Rig r = rig();
+  // Asked of the server directly, as a child that skipped its own policy would: none of these may trap the desktop.
+  r.server.answer(PAGE_MAKE, 5 as i64, pair(0, 0 - 1), "script", u8[]());
+  r.server.answer(PAGE_MAKE, 6 as i64, pair(0, 0 - 1), "button", u8[]());
+  r.server.answer(PAGE_ATTR, 6 as i64, 1 as i64, "onclick", "alert(1)".toBytes());
+  r.server.answer(PAGE_ATTR, 9 as i64, 1 as i64, "title", "x".toBytes());
+  r.server.answer(PAGE_REMOVE, 0 as i64, 0 as i64, "", u8[]());
+  t.eqI32(r.server.refused.len(), 4, "four refusals, and one button made");
+  t.isTrue(r.server.refused.get(0).indexOf("script") >= 0, "a script: " + r.server.refused.get(0));
+  t.isTrue(r.server.refused.get(1).indexOf("onclick") >= 0, "a handler written: " + r.server.refused.get(1));
+  t.isTrue(r.server.refused.get(2).indexOf("not live") >= 0, "a handle the child never made: " + r.server.refused.get(2));
+  t.isTrue(r.server.refused.get(3).indexOf("stays") >= 0, "the window itself: " + r.server.refused.get(3));
+  t.isTrue(r.doc.findTag("button") >= 0, "the button was made");
+  t.eqI32(r.doc.findTag("script"), 0 - 1, "the script was not");
+  return t.report();
+}

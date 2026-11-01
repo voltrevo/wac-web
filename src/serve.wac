@@ -1,0 +1,292 @@
+// `wac.page` answered by a program written in wac: another program's page, drawn into an element this one holds.
+//
+// **A desktop's window is this.** The desktop starts a page's module as a child (`Procs.spawnProviding`) and
+// provides `wac.page` with `PageServer.provider`; the child's handle 0 is the element the desktop handed over — the
+// window's body — and every element the child makes is one made under it here, through this program's own
+// handles. So the child reaches nothing above or beside its window: the handle layer's rule, held across a process.
+//
+// **A child's mistake is refused, not trapped on.** A trap here would end the desktop, so each change is checked
+// before it is made — a handle that is not live, a `<script>`, an `on…` attribute, a canvas drawn at the wrong
+// size — and one that fails is dropped and noted in `refused`, the way a browser drops what its policy refuses.
+//
+// **What comes back is the child's to ask for**, as `line.wac` has it: its next event is answered from what its
+// elements heard, a frame by this page's next frame, a value by the element's. Its location never changes — a
+// window has no address bar — and no file reaches it until the desktop hands one over, which it does not yet.
+
+import { Answer, FAULT_UNSUPPORTED, Provider } from "std";
+import { Map, Queue, Ticket, Vec, hashI32, i32Eq } from "core";
+import { Element, ElementEvent, Listen, whyNotAttr, whyNotTag } from "./element.wac";
+import { Page } from "./page.wac";
+import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE,
+         PAGE_FOCUS, PAGE_FRAME, PAGE_LISTEN, PAGE_LOCATION, PAGE_LOG, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_MOVE,
+         PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_TEXT, PAGE_TITLE,
+         PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
+
+/** How many refusals are kept: the latest, which is what someone looking at a misbehaving window wants. */
+static i32 KEPT_REFUSALS = 32;
+
+export struct PageServer {
+  /** The page this program draws into: its frames, and its downloads, are the child's too. */
+  Page page;
+  /** The child's handles, by its numbers: 0 is the element handed over, a removed one is not live. */
+  Vec<Element?> byId;
+  /** Each element the child made, by this side's number for it: the child's number. */
+  Map<i32, i32> childOf;
+  /** Events heard that the child has not asked for yet, and its requests for the next one. */
+  Queue<Happened> heard;
+  Queue<Ticket<Answer>> asking;
+  i32 seq;
+  /** Told each title the child gives its page — a window's caption. */
+  fn<void(string)> onTitle;
+  /** Told each line the child logs. */
+  fn<void(string)> onLog;
+  /** What the child asked for that was refused, latest last. */
+  Vec<string> refused;
+
+  /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
+  PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
+    Vec<Element?> byId = Vec.create();
+    byId.push(root);
+    Queue<Happened> heard;
+    Queue<Ticket<Answer>> asking;
+    return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, 0, onTitle, onLog, Vec.create());
+  }
+
+  /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
+  Provider provider(this) {
+    PageServer s = this;
+    return Provider(PAGE_CAPABILITY(), PAGE_VERSION(), PAGE_COUNT,
+                    (i32 k, i64 a, i64 b, string text, u8[] bytes) => s.answer(k, a, b, text, bytes));
+  }
+
+  /** The child's request `k` of the capability, answered — at once, or when what it waits for arrives. */
+  Ticket<Answer> answer(this, i32 k, i64 a, i64 b, string text, u8[] bytes) {
+    if (k == PAGE_BATCH) {
+      Change[] changes = batchOf(bytes);
+      for (i32 i = 0; i < changes.len(); i++) {
+        Change c = changes[i];
+        this.change(c.op, c.a, c.b, c.text, c.bytes);
+      }
+      return done("");
+    }
+    if (k == PAGE_VALUE) {
+      Element? e = this.at(lowOf(a));
+      if (e is null) { return done(""); }
+      Ticket<Answer> t;
+      Ticket<string> v = e!.value();
+      v.whenSettled(() => { t.resolve(Answer(0, v.value(), u8[](), 0 as i64, 0 as i64, 0)); });
+      return t;
+    }
+    if (k == PAGE_EVENT) {
+      Ticket<Answer> t;
+      Happened? h = this.heard.pop();
+      if (h is not null) {
+        t.resolve(eventAnswer(h!));
+        return t;
+      }
+      this.asking.push(t);
+      return t;
+    }
+    if (k == PAGE_FRAME) {
+      Ticket<Answer> t;
+      Ticket<f64> f = this.page.nextFrame();
+      f.whenSettled(() => { t.resolve(Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); });
+      return t;
+    }
+    if (k == PAGE_LOCATION) {
+      // The location is always the empty one: answered only to a child that thinks it is somewhere else.
+      if (text != "") { return done(""); }
+      Ticket<Answer> never;
+      return never;
+    }
+    if (k == PAGE_FILE) {
+      Ticket<Answer> never;
+      return never;
+    }
+    if (k >= 0 && k < PAGE_COUNT) {
+      this.change(k, a, b, text, bytes);
+      return done("");
+    }
+    Ticket<Answer> t;
+    t.resolve(Answer(FAULT_UNSUPPORTED(), "wac.page has no request \{k}", u8[](), 0 as i64, 0 as i64, 0));
+    return t;
+  }
+
+  /** The child's live element `h`, or null. */
+  Element? at(this, i32 h) {
+    if (h < 0 || h >= this.byId.len()) { return null; }
+    Element? e = this.byId.get(h);
+    if (e is null || !e!.isLive()) { return null; }
+    return e;
+  }
+
+  void refuse(this, string why) {
+    if (this.refused.len() >= KEPT_REFUSALS) { this.refused.remove(0); }
+    this.refused.push(why);
+  }
+
+  /** Record `e` as the child's `h`. A number already taken by a live element is the child's mistake. */
+  bool adopt(this, i32 h, Element e) {
+    if (h <= 0 || h > this.byId.len() + 4096) {
+      this.refuse("handle \{h} is not one the child could have made");
+      return false;
+    }
+    while (this.byId.len() <= h) { this.byId.push(null); }
+    if (this.at(h) is not null) {
+      this.refuse("handle \{h} is already in use");
+      return false;
+    }
+    this.byId.set(h, e);
+    this.childOf.set(e.id, h);
+    return true;
+  }
+
+  /** One change, made through this program's own handles once it has been checked. */
+  void change(this, i32 k, i64 a, i64 b, string text, u8[] bytes) {
+    i32 h = lowOf(a);
+    if (k == PAGE_TITLE) {
+      this.onTitle(text);
+      return;
+    }
+    if (k == PAGE_LOG) {
+      this.onLog(text);
+      return;
+    }
+    if (k == PAGE_DOWNLOAD) {
+      this.page.download(text, bytes);
+      return;
+    }
+    if (k == PAGE_MAKE || k == PAGE_MAKE_TEXT) {
+      Element? parent = this.at(highOf(b));
+      if (parent is null || parent!.tag == "") {
+        this.refuse("make: \{highOf(b)} is not an element of the child's that can hold children");
+        return;
+      }
+      Element? before = null;
+      if (lowOf(b) >= 0) {
+        before = this.at(lowOf(b));
+        if (before is null || before!.parentOf() is null || before!.parentOf()! is not parent!) {
+          this.refuse("make: \{lowOf(b)} is not a child of \{highOf(b)}");
+          return;
+        }
+      }
+      if (k == PAGE_MAKE) {
+        string why = whyNotTag(text);
+        if (why != "") {
+          this.refuse("make: " + why);
+          return;
+        }
+        Element made = parent!.insert(text, before);
+        if (!this.adopt(h, made)) { made.remove(); }
+        return;
+      }
+      Element madeText = parent!.insertText(text, before);
+      if (!this.adopt(h, madeText)) { madeText.remove(); }
+      return;
+    }
+    Element? found = this.at(h);
+    if (found is null) {
+      this.refuse("request \{k}: handle \{h} is not live");
+      return;
+    }
+    Element e = found!;
+    if (k == PAGE_TEXT) {
+      e.text(text);
+      return;
+    }
+    if (k == PAGE_ATTR) {
+      string value = string.fromBytes(bytes);
+      string why = whyNotAttr(text, b != 0 as i64 ? value : null);
+      if (why != "") {
+        this.refuse("attr: " + why);
+        return;
+      }
+      e.attr(text, b != 0 as i64 ? value : null);
+      return;
+    }
+    if (k == PAGE_PROP) {
+      if (text != "value" && text != "checked" && text != "selected") {
+        this.refuse("prop: " + text + " is not a property a page sets");
+        return;
+      }
+      e.prop(text, string.fromBytes(bytes));
+      return;
+    }
+    if (k == PAGE_MOVE || k == PAGE_REMOVE) {
+      if (h == 0) {
+        this.refuse("the element handed over stays where it is");
+        return;
+      }
+      if (k == PAGE_REMOVE) {
+        e.remove();
+        return;
+      }
+      Element? to = null;
+      if (lowOf(b) >= 0) {
+        to = this.at(lowOf(b));
+        if (to is null || to!.parentOf() is null || e.parentOf() is null || to!.parentOf()! is not e.parentOf()!) {
+          this.refuse("move: \{lowOf(b)} is not beside \{h}");
+          return;
+        }
+      }
+      e.move(to);
+      return;
+    }
+    if (k == PAGE_LISTEN) {
+      PageServer s = this;
+      i32 listener = h;
+      e.on(text, Listen(string.fromBytes(bytes)), (ElementEvent ev) => { s.heardOn(listener, ev); });
+      return;
+    }
+    if (k == PAGE_FOCUS) {
+      e.focus();
+      return;
+    }
+    if (k == PAGE_SCROLL) {
+      if (text == "") { e.scrollIntoView(); } else { e.scrollToId(text); }
+      return;
+    }
+    if (k == PAGE_SELECT) {
+      e.select(highOf(b), lowOf(b));
+      return;
+    }
+    if (k == PAGE_TYPE_TEXT) {
+      e.typeText(text);
+      return;
+    }
+    if (k == PAGE_PIXELS || k == PAGE_PIXELS_IN) {
+      i32 x = k == PAGE_PIXELS ? 0 : quadAt(b, 0);
+      i32 y = k == PAGE_PIXELS ? 0 : quadAt(b, 1);
+      i32 w = k == PAGE_PIXELS ? highOf(b) : quadAt(b, 2);
+      i32 ht = k == PAGE_PIXELS ? lowOf(b) : quadAt(b, 3);
+      if (e.tag != "canvas" || w < 0 || ht < 0 || bytes.len() != w * ht * 4) {
+        this.refuse("pixels: \{bytes.len()} bytes is not \{w}x\{ht} pixels of a canvas");
+        return;
+      }
+      if (k == PAGE_PIXELS) { e.pixels(w, ht, bytes); } else { e.pixelsIn(x, y, w, ht, bytes); }
+      return;
+    }
+    this.refuse("wac.page has no change \{k}");
+  }
+
+  /** An event heard by the child's listener `listener`, for the child — told now if it is asking, or kept. */
+  void heardOn(this, i32 listener, ElementEvent ev) {
+    i32? target = this.childOf.get(ev.target.id);
+    this.seq++;
+    Happened h = Happened(this.seq, ev.kind, target ?? listener, listener, ev.value, ev.x, ev.y, ev.mods, ev.selStart,
+                          ev.selEnd);
+    Ticket<Answer>? t = this.asking.pop();
+    if (t is not null) {
+      t!.resolve(eventAnswer(h));
+      return;
+    }
+    this.heard.push(h);
+  }
+}
+
+/** An answer with nothing in it but `text`, already settled. */
+Ticket<Answer> done(string text) {
+  Ticket<Answer> t;
+  t.resolve(Answer(0, text, u8[](), 0 as i64, 0 as i64, 0));
+  return t;
+}

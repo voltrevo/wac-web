@@ -47,6 +47,8 @@ export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, 
          PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_COUNT, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
+// `wac.page` answered into an element this program holds — a desktop drawing a program into a window.
+export { PageServer } from "./serve.wac";
 
 
 /** `ElementEvent.mods`: which modifier keys were held. */
