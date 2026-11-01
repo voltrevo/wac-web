@@ -2,11 +2,10 @@
 //
 //     wac run --allow-read --allow-write --allow-run tools/build.wac src/app.wac dist
 //
-// **Three steps, all of them visible in the output directory.** A wrapper module, `page.wac`, gives the
-// host the calls it makes — make a page, start the program, deliver an element's event, a timer, a file
-// or a value — and imports the program's `main`. `wac bindgen --script` turns the wrapper into `page.js`,
-// the glue with the program inside it. `index.html` is that module and the host — the browser's side,
-// written below — so the page is a single file any static server, or none, can serve.
+// **Three steps, all of them visible in the output directory.** `page.wac` is the page's program as a module
+// (`moduleFor`): it opens the page its host provides and runs the program's `main` with it. `wac build` makes it
+// `page.wasm`. `index.html` is that module, as base64, and the host — the browser's side, written below — so the
+// page is a single file any static server, or none, can serve; and the same `page.wasm` runs in a desktop's window.
 //
 // **The program runs in a worker unless `--in-page` says otherwise.** A worker is the default because
 // a page's program is a program: a loop that computes for a second, or forever, should cost the
@@ -18,8 +17,8 @@
 //
 // **A program, not a script in someone else's language**, so a project outside this repository builds
 // a page with the `wac` it already has and this package as a dependency (`template/`). It
-// runs `wac bindgen` as a command, which is why it needs `--allow-run`; `--wac <path>` names a binary
-// other than the one on `PATH`, and `--page <spec>` the module the wrapper imports `Page` from when the
+// runs `wac build` as a command, which is why it needs `--allow-run`; `--wac <path>` names a binary
+// other than the one on `PATH`, and `--page <spec>` the module the page's module imports `Page` from when the
 // project does not map this package as `web`.
 
 import { Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
@@ -1457,10 +1456,10 @@ export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs proc
     err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
-  // **The wrapper is a module of this project**, so it is written inside it: from anywhere else its
+  // **The page's module is a module of this project**, so it is written inside it: from anywhere else its
   // imports would cross a project boundary, and the build would fail naming an import rather than this.
   if (leavesHere(a.out)) {
-    err.write("build.wac: \{a.out}: the output directory must be inside this directory, since the page's wrapper is written there and imports the program\n".toBytes());
+    err.write("build.wac: \{a.out}: the output directory must be inside this directory, since the page's module is written there and imports the program\n".toBytes());
     return 2;
   }
   fs.mkdir(a.out, true).wait();

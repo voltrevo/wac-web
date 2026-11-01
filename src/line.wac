@@ -26,7 +26,7 @@
 // the last event the program saw in `a`'s high half. Two `i32`s in one field are `pair(high, low)`.
 
 import { Answer, Host, ask } from "std";
-import { Buf, Ticket, Vec } from "core";
+import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
@@ -96,8 +96,12 @@ export static i32 PAGE_ONE_AT_A_TIME = 1;
  * Run `f` once `t` has settled — now, if it has. **`whenSettled` alone never runs for a ticket already settled**, and
  * a host may answer inside the request that asked: the browser's host answers a location at once, and a
  * `PageServer` an event it already heard. Waited for with `whenSettled`, those answers were never heard.
+ *
+ * **Over `TicketBase`, not generic**: as `when<T>`, the lambdas handed to it were ones the compiler could not yet type
+ * in a module as large as a desktop's, and the desktop stopped building ("a lambda in a position the walk does not
+ * type yet") while every page here still built.
  */
-export void when<T>(Ticket<T> t, fn<void()> f) {
+export void when(TicketBase t, fn<void()> f) {
   if (t.settled()) {
     f();
     return;
