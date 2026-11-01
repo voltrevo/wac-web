@@ -1,0 +1,67 @@
+// Write a site's `index.json`: every path under its root, each a file with its size or a directory — what `wac.site`'s
+// files (`src/site.wac`) answer a listing and a size from, since a site can only be asked for a file.
+//
+//     wac run --allow-read --allow-write tools/index.wac dist
+//
+// **The site's build writes it**, as the owner chose, after everything else is in place: so it lists what is served,
+// and nobody keeps it by hand. `index.json` itself is not listed. The shape is `{"files":[["a/b.wasm",123],...],
+// "dirs":["a",...]}`, no spaces, which is all `src/site.wac` reads — so a name with a `"` or a `\` in it is refused
+// here rather than written in a way that could not be read back.
+
+import { Files, Output, Sys } from "std";
+import { Buf, Vec, flatten } from "core";
+
+/** Every path under `dir`, relative to `root`, into `files` and `dirs`; "" when it went well, or what went wrong. */
+string walk(Files fs, string root, string rel, Vec<string> files, Vec<i64> sizes, Vec<string> dirs) {
+  string at = rel == "" ? root : root + "/" + rel;
+  auto listed = flatten(fs.readDir(at).wait());
+  if (listed.isErr()) { return at + ": \{listed.err()!}"; }
+  string[] names = listed.ok()!;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    string path = rel == "" ? name : rel + "/" + name;
+    if (path == "index.json") { continue; }
+    if (name.indexOf("\"") >= 0 || name.indexOf("\\") >= 0) { return path + ": a name with a quote or a backslash cannot be indexed"; }
+    auto s = flatten(fs.stat(root + "/" + path).wait());
+    if (s.isErr()) { return path + ": \{s.err()!}"; }
+    if (s.ok()!.isDir) {
+      dirs.push(path);
+      string why = walk(fs, root, path, files, sizes, dirs);
+      if (why != "") { return why; }
+    } else {
+      files.push(path);
+      sizes.push(s.ok()!.size);
+    }
+  }
+  return "";
+}
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() != 1) {
+    sys.stderr().line("usage: index.wac <site-dir>");
+    return 2;
+  }
+  string root = args[0];
+  Vec<string> files = Vec.create();
+  Vec<i64> sizes = Vec.create();
+  Vec<string> dirs = Vec.create();
+  string why = walk(sys.files(), root, "", files, sizes, dirs);
+  if (why != "") {
+    sys.stderr().line("index.wac: " + why);
+    return 1;
+  }
+  Buf b = Buf.create();
+  b.pushStr("{\"files\":[");
+  for (i32 i = 0; i < files.len(); i++) { b.pushStr((i > 0 ? "," : "") + "[\"" + files.get(i) + "\",\{sizes.get(i)}]"); }
+  b.pushStr("],\"dirs\":[");
+  for (i32 i = 0; i < dirs.len(); i++) { b.pushStr((i > 0 ? "," : "") + "\"" + dirs.get(i) + "\""); }
+  b.pushStr("]}\n");
+  auto wrote = flatten(sys.files().writeFile(root + "/index.json", b.take()).wait());
+  if (wrote.isErr()) {
+    sys.stderr().line("index.wac: \{root}/index.json: \{wrote.err()!}");
+    return 1;
+  }
+  sys.stdout().line("\{root}/index.json: \{files.len()} files, \{dirs.len()} folders");
+  return 0;
+}

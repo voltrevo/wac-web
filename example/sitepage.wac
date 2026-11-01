@@ -1,0 +1,39 @@
+// A page that reads the site it was served from, as files: what `test/site_live.test.ts` builds, serves and opens.
+// It lists the site's `data` folder and reads the note in it — or, opened from a file, says there is no site.
+
+import { Sys } from "std";
+import { Node, Page, Site, Ui, html.p, siteFiles } from "../src/page.wac";
+
+async string read(Sys sys) {
+  match (await Site.of(sys)) {
+    Ok(site): {
+      auto files = siteFiles(site);
+      auto names = await files.readDir("data");
+      if (names.isErr()) { return "no listing: \{names.err()!}"; }
+      auto note = await files.readFile("/data/note.txt");
+      if (note.isErr()) { return "no note: \{note.err()!}"; }
+      auto written = await files.writeFile("data/new.txt", "x".toBytes());
+      string[] all = names.ok()!;
+      string listed = "";
+      for (i32 i = 0; i < all.len(); i++) { listed = listed + (i > 0 ? "," : "") + all[i]; }
+      return listed + "|" + string.fromBytes(note.ok()!) + "|" + (written.isOk() ? "written" : "read-only");
+    }
+    Err(why): { return "no site: " + why; }
+  }
+}
+
+async void show(Sys sys, fn<void(string)> f) { f(await read(sys)); }
+
+Node Reads(Ui ui, Page page) {
+  auto said = ui.state("…");
+  ui.effect("", () => {
+    show(page.sys, (string s) => { said.set(s); });
+    return () => { };
+  });
+  return <p id="said">{said.get()}</p>;
+}
+
+export async i32 main(Page page) {
+  page.mount((Ui ui) => <Reads page={page}/>);
+  return 0;
+}

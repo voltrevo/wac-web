@@ -1,0 +1,198 @@
+// `wac.site`: the site a page was served from, read a path at a time — and as files, read-only.
+//
+// **A GET of a path on the page's own origin, and nothing wider** (the desktop handover's design point 7). A page's
+// host answers it with `fetch`, so the browser's HTTP cache does the caching and nothing is copied into a page's own
+// storage; a page opened from a file has no site, and its host says so. It is narrower than a network grant, and its
+// own capability, so a program is handed it — or not — apart from any other.
+//
+// **As files** (`siteFiles`): reading a file is a GET of it, and what a directory holds, and how large a file is,
+// come from the site's `index.json`, which its build writes (`tools/index.wac`) — every path under the site's root,
+// each a file with its size or a directory — fetched once. Nothing can be changed.
+
+import { Answer, FAULT_NONE, FileOps, Files, Input, IsDir, LookFault, MkdirFault, ModeFault, MoveFault, NotADir,
+         NotFound, OP_CAPABILITY, Output, ReadFault, ReadOnly, Stat, Sys, Unsupported, WriteFault, ask } from "std";
+import { Result, Ticket, Vec } from "core";
+
+export string SITE_CAPABILITY() { return "wac.site"; }
+export string SITE_VERSION() { return "1.0.0"; }
+
+/** `text` a path under the site's root → `bytes` what is there; a fault when there is nothing, or no site. */
+export static i32 SITE_GET = 0;
+/** How many request numbers the capability takes. */
+export static i32 SITE_COUNT = 1;
+
+/** The site this program's host was served from. */
+export struct Site {
+  Sys sys;
+  i32 base;
+
+  /** The site, if the program's host has one; `Err` says why not — a page opened from a file has none. */
+  async Result<Site, string> of(Sys sys) {
+    Answer found = await ask(sys.host, OP_CAPABILITY(), 0 as i64, 0 as i64, SITE_CAPABILITY(), "^1".toBytes());
+    if (found.fault != FAULT_NONE()) { return Result.Err(found.text); }
+    return Result.Ok(Site(sys, found.n as~ i32));
+  }
+
+  /** What is at `path` on the site, or why not. */
+  async Result<u8[], string> get(this, string path) {
+    Answer a = await ask(this.sys.host, this.base + SITE_GET, 0 as i64, 0 as i64, path, u8[]());
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    return Result.Ok(a.bytes);
+  }
+}
+
+/** One path of a site's index: a file and its size, or a directory. */
+struct Entry {
+  string path;
+  bool dir;
+  i64 size;
+}
+
+/**
+ * A site's `index.json`, read: `{"files": [["apps/explorer.wasm", 310588], …], "dirs": ["apps", …]}`. Written by
+ * `tools/index.wac`, so only that shape is read, and anything else answers an empty site.
+ */
+Vec<Entry> indexOf(u8[] json) {
+  Vec<Entry> out = Vec.create();
+  string s = string.fromBytes(json);
+  i32 at = s.indexOf("\"files\"");
+  if (at >= 0) {
+    // Each file is `["path", size]`, its path with no `"` or `\` in it, which `tools/index.wac` refuses to write.
+    i32 i = at;
+    while (true) {
+      i32 open = s.slice(i, s.len()).indexOf("[\"");
+      i32 dirsAt = s.indexOf("\"dirs\"");
+      if (open < 0 || (dirsAt >= 0 && i + open > dirsAt)) { break; }
+      i32 from = i + open + 2;
+      i32 close = s.slice(from, s.len()).indexOf("\"");
+      if (close < 0) { break; }
+      string path = s.slice(from, from + close);
+      i32 n = from + close + 2;
+      i64 size = 0 as i64;
+      while (n < s.len() && s.slice(n, n + 1) >= "0" && s.slice(n, n + 1) <= "9") {
+        size = size * (10 as i64) + ((s.toBytes()[n] as i32 - 48) as i64);
+        n++;
+      }
+      out.push(Entry(path, false, size));
+      i = n;
+    }
+  }
+  i32 dirs = s.indexOf("\"dirs\"");
+  if (dirs >= 0) {
+    i32 i = dirs + 6;
+    while (true) {
+      i32 q = s.slice(i, s.len()).indexOf("\"");
+      if (q < 0) { break; }
+      i32 from = i + q + 1;
+      i32 close = s.slice(from, s.len()).indexOf("\"");
+      if (close < 0) { break; }
+      out.push(Entry(s.slice(from, from + close), true, 0 as i64));
+      i = from + close + 1;
+    }
+  }
+  return out;
+}
+
+/** `p` as the index names it: no leading `/`, no `.` parts. */
+string indexed(string p) {
+  string out = "";
+  i32 start = 0;
+  for (i32 i = 0; i <= p.len(); i++) {
+    if (i < p.len() && p.slice(i, i + 1) != "/") { continue; }
+    string part = p.slice(start, i);
+    start = i + 1;
+    if (part == "" || part == ".") { continue; }
+    out = out == "" ? part : out + "/" + part;
+  }
+  return out;
+}
+
+/** The site's index, fetched once, and shared by every call that needs it. */
+struct Index {
+  Site site;
+  Ticket<Vec<Entry>>? got;
+
+  Ticket<Vec<Entry>> entries(this) {
+    if (this.got is not null) { return this.got!; }
+    Ticket<Vec<Entry>> t = fetchIndex(this.site);
+    this.got = t;
+    return t;
+  }
+}
+
+async Vec<Entry> fetchIndex(Site site) {
+  Result<u8[], string> got = await site.get("index.json");
+  if (got.isErr()) { return Vec.create(); }
+  return indexOf(got.ok()!);
+}
+
+Entry? find(Vec<Entry> all, string p) {
+  for (i32 i = 0; i < all.len(); i++) { if (all.get(i).path == p) { return all.get(i); } }
+  return null;
+}
+
+async Result<u8[], ReadFault> siteRead(Index ix, string path) {
+  string p = indexed(path);
+  Entry? e = find(await ix.entries(), p);
+  if (e is null) { return Result.Err(NotFound(path + ": No such file or directory")); }
+  if (e!.dir) { return Result.Err(IsDir(path + ": Is a directory")); }
+  Result<u8[], string> got = await ix.site.get(p);
+  if (got.isErr()) { return Result.Err(NotFound(path + ": " + got.err()!)); }
+  return Result.Ok(got.ok()!);
+}
+
+/** What `path` is on the site — absence an answer, as `Stat` has it, not a fault. */
+async Result<Stat, LookFault> siteStat(Index ix, string path) {
+  string p = indexed(path);
+  if (p == "") { return Result.Ok(Stat.of(true, false, true, 0 as i64, 0 as i64, false, false, 0, 365)); }
+  Entry? e = find(await ix.entries(), p);
+  if (e is null) { return Result.Ok(Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, 0, 0)); }
+  return Result.Ok(Stat.of(true, !e!.dir, e!.dir, e!.size, 0 as i64, false, false, 0, e!.dir ? 365 : 292));
+}
+
+async Result<string[], LookFault> siteList(Index ix, string path) {
+  string p = indexed(path);
+  Vec<Entry> all = await ix.entries();
+  if (p != "") {
+    Entry? e = find(all, p);
+    if (e is null) { return Result.Err(NotFound(path + ": No such file or directory")); }
+    if (!e!.dir) { return Result.Err(NotADir(path + ": Not a directory")); }
+  }
+  Vec<string> names = Vec.create();
+  string prefix = p == "" ? "" : p + "/";
+  for (i32 i = 0; i < all.len(); i++) {
+    string q = all.get(i).path;
+    if (q.len() <= prefix.len() || q.slice(0, prefix.len()) != prefix) { continue; }
+    string rest = q.slice(prefix.len(), q.len());
+    if (rest.indexOf("/") < 0) { names.push(rest); }
+  }
+  return Result.Ok(names.toArray());
+}
+
+string readOnlyWords(string p) { return p + ": Read-only file system"; }
+async Result<void, WriteFault> siteNoWrite(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<Output, WriteFault> siteNoOutput(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<Input, ReadFault> siteNoStream(string p) { return Result.Err(Unsupported(p + ": read it whole; a site is read a file at a time")); }
+async Result<void, MkdirFault> siteNoMkdir(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, MoveFault> siteNoMove(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, ModeFault> siteNoMode(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+
+/** The site as files: read-only, its listings and sizes from its `index.json`, each file a GET. */
+export Files siteFiles(Site site) {
+  Index ix = Index(site, null);
+  return Files.of(FileOps(
+    (string p) => siteRead(ix, p),
+    (string p, u8[] b) => siteNoWrite(p),
+    (string p) => siteNoStream(p),
+    (string p) => siteNoOutput(p),
+    (string p) => siteNoOutput(p),
+    (string p) => siteStat(ix, p),
+    (string p) => siteStat(ix, p),
+    (string p) => siteList(ix, p),
+    (string p, bool parents) => siteNoMkdir(p),
+    (string p, bool recursive) => siteNoMove(p),
+    (string from, string to) => siteNoMove(from),
+    (string p, i32 mode) => siteNoMode(p),
+    (string p, bool on) => siteNoMode(p),
+    (string p, string owner) => siteNoMode(p)), "");
+}

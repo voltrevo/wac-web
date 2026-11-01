@@ -209,14 +209,15 @@ export string base64(u8[] bytes) {
  * on the page — and touches nothing of the document itself; a frame is the document's to give, and the clock and
  * timers are the system's.
  *
- * `wacPageServer(next, answer, post, where)` answers the lookup and the capability's range, passes every other
- * request to `next`, sends the document what `post` takes, and starts at location `where`; it answers `request`,
- * and `receive` for what the document sends back. A buffer is handed over rather than copied when it is the whole
+ * `wacPageServer(next, answer, post, where, site)` answers the lookup and the capability's range, passes every
+ * other request to `next`, sends the document what `post` takes, and starts at location `where`; it answers
+ * `request`, and `receive` for what the document sends back. `site` is the page's own URL, or null for a page opened
+ * from a file: what `wac.site` (`src/site.wac`) fetches from, relative to it and never outside its folder. A buffer is handed over rather than copied when it is the whole
  * of its own memory.
  */
 export string programSide() {
   return """
-      const wacPageServer = (next, answer, post, where) => {
+      const wacPageServer = (next, answer, post, where, site) => {
         // **Where `wac.page`'s numbers start here** — above every request std numbers, below the 2^20 a parent
         // numbers the capabilities it provides from.
         const BASE = 4096, COUNT = 23;
@@ -300,7 +301,31 @@ export string programSide() {
             }
           }
         };
+        // **`wac.site`**: a GET on the page's own origin, under its folder — the browser's cache does the caching.
+        const SITE = BASE + 100;
+        const siteDir = site === null ? null : new URL("./", site);
+        const siteGet = (id, path) => {
+          let rel = path;
+          while (rel.startsWith("/")) rel = rel.slice(1);
+          const u = new URL(rel, siteDir);
+          if (!u.href.startsWith(siteDir.href)) return answer(id, 9, path + " is not under the page's site", NONE, 0n, 0n, 0);
+          fetch(u).then((r) => r.ok
+              ? r.arrayBuffer().then((buf) => answer(id, 0, "", new Uint8Array(buf), 0n, 0n, 0))
+              : answer(id, 2, path + ": the site answered " + r.status, NONE, 0n, 0n, 0),
+            (e) => answer(id, 5, path + ": " + String(e?.message ?? e), NONE, 0n, 0n, 0));
+        };
+        const allows = (versions) => {
+          // `^1`, `^1.0`, `^1.0.0` or `1.0.0`: what a 1.0.0 capability here allows.
+          const [major, minor, patch] = (versions.startsWith("^") ? versions.slice(1) : versions).split(".");
+          return versions.startsWith("^") ? major === "1" && (minor ?? "0") === "0" && (patch ?? "0") === "0" : versions === "1.0.0";
+        };
         const request = (op, id, a, b, text, bytes) => {
+          if (op === 68 && text === "wac.site") {
+            if (siteDir === null) return answer(id, 9, "a page opened from a file has no site", NONE, 0n, 0n, 0);
+            if (!allows(dec.decode(bytes))) return answer(id, 9, "wac.site here is 1.0.0, which " + dec.decode(bytes) + " does not allow", NONE, 0n, 0n, 0);
+            return answer(id, 0, "1.0.0", NONE, BigInt(SITE), 1n, 0);
+          }
+          if (op === SITE) return siteGet(id, text);
           if (op === 68 && text === "wac.page") {
             // `^1`, `^1.2`, or an exact `1.2.3`: this host speaks 1.0.0, which only `^1`, `^1.0`, `^1.0.0` and `1.0.0` allow.
             const v = dec.decode(bytes);
@@ -1011,9 +1036,9 @@ export string moduleSide() {
       //
       // It holds what the build granted (`grants`), draws by sending `post` what the document applies, starts at
       // location `where`, and answers `receive` for what the document sends back.
-      const wacPage = (wasm, grants, post, where) => {
+      const wacPage = (wasm, grants, post, where, site) => {
         const me = { child: false, args: [], cwd: "/", post: null };
-        const top = wacRun(wasm, me, grants, (next, answer) => wacPageServer(next, answer, post, where), (text) => console.error(text));
+        const top = wacRun(wasm, me, grants, (next, answer) => wacPageServer(next, answer, post, where, site), (text) => console.error(text));
         return top === null ? () => {} : top.receive;
       };
       """;
@@ -1356,7 +1381,7 @@ export string workerIndexFor(string title, string wasm, i32 grants) {
        + "  if (wacFromPage(e.data)) return;\n"
        + "  if (receive !== null) return receive(e.data);\n"
        + "  if (e.data[0] === \"module\") { receive = () => {}; return wacModule(e.data[1], e.data[2]); }\n"
-       + "  receive = wacPage(e.data[2], \{grants}, (m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
+       + "  receive = wacPage(e.data[2], \{grants}, (m, transfer) => postMessage(m, transfer ?? []), e.data[1], e.data[3]);\n"
        + "};\n</script>\n"
        + documentScript(documentSide() + brokerSide() + moduleBytes()
        + """
@@ -1368,7 +1393,7 @@ export string workerIndexFor(string title, string wasm, i32 grants) {
          worker.onmessage = (e) => { if (!broker(worker, e.data)) apply(e.data); };
          worker.onerror = (e) => console.error(e.message);
          const wasm = wacModuleBytes();
-         worker.postMessage(["page", location.hash, wasm], [wasm.buffer]);
+         worker.postMessage(["page", location.hash, wasm, location.protocol === "file:" ? null : location.href], [wasm.buffer]);
          """)
        + "</body>\n</html>\n";
 }
@@ -1379,7 +1404,7 @@ export string inPageIndexFor(string title, string wasm, i32 grants) {
        + documentScript(systemSide() + moduleSide() + programSide() + documentSide() + moduleBytes()
        + "let receive = null;\n"
        + "const apply = wacDocument(document.getElementById(\"app\"), (m) => receive(m));\n"
-       + "receive = wacPage(wacModuleBytes(), \{grants}, (m) => apply(m), location.hash);\n")
+       + "receive = wacPage(wacModuleBytes(), \{grants}, (m) => apply(m), location.hash, location.protocol === \"file:\" ? null : location.href);\n")
        + "</body>\n</html>\n";
 }
 
@@ -1431,9 +1456,12 @@ export string loaderHash() { return "xLE7i4agIkrLt+lCU03oQkaXG/ugC3kfxyQdZETBPVM
  * fetched from anywhere — not an image, not a style sheet, not a frame. A program has no network grant,
  * so a document it draws cannot be one either: `<img src="https://elsewhere/?secret">` is refused here
  * as well as by the handle layer's policy, and an injected `<script>` or `onerror` does not run.
+ *
+ * **Except its own origin, to read** (`connect-src 'self'`): `wac.site`'s GETs, which the host makes for a program
+ * and keeps under the page's folder. A program runs no script of its own, so the host is all that can.
  */
 export string policy() {
-  return "default-src 'none'; script-src 'sha256-" + loaderHash() + "' blob: 'wasm-unsafe-eval'; "
+  return "default-src 'none'; connect-src 'self'; script-src 'sha256-" + loaderHash() + "' blob: 'wasm-unsafe-eval'; "
        + "worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
        + "media-src data: blob:; base-uri 'none'; form-action 'none'";
 }

@@ -57,5 +57,8 @@ of the desktop (step 2 of the handover in `https://git.voltrevo.com/notes.git`,
   is a page's program in a window; wac-desktop's `src/desk/program.wac` does it.
 - **Done:** `Desktop.of(sys)` (`src/desktop.wac`), the client of `wac.desktop` — the picker, `open`, `note`, the
   clipboard — which wac-desktop serves; `PageServer.hand`, a file handed to a window's program.
-- **Next:** a program opening windows of its own — a `wac.desktop` request that answers a page — rather than the
-  one the desktop gives it at launch.
+- **Done:** `Desktop.openWindow` (a window's page is its slice of `wac.page`), `Desktop.askFor` (more than a
+  program is handed, asked for once), and `wac.site` (`src/site.wac`): the page's own site, read a file at a time or
+  as read-only files over the `index.json` its build writes (`tools/index.wac`). The browser's host answers it.
+- **Next:** the desktop's programs living on its site — the built-in apps as modules there — and a program's
+  description of itself, which needs a section wac's builder does not write yet.

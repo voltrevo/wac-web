@@ -144,6 +144,17 @@ test into records. The program cannot tell which, and one with no page — run f
 by `Page.open` rather than handed one that draws nowhere. A host written in wac answers with what `line.wac`
 exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the fields.
 
+## The site a page came from — `wac.site`
+
+`Site.of(sys)` is the site the page was served from, and `site.get(path)` a GET of a path under the page's folder —
+the browser's cache doing the caching, nothing copied anywhere. `siteFiles(site)` is the site as files, read-only:
+a read is a GET, and a listing or a size comes from the site's `index.json`, which its build writes with
+
+    wac run --allow-read --allow-write tools/index.wac <site-dir>
+
+after everything else is in place. A page opened from a file has no site, and `Site.of` says so. The page's policy
+allows its own origin to be read for this (`connect-src 'self'`), and nothing else.
+
 ## Testing a page without a browser
 
 `TestDoc` is such a host: `doc.page()` is a page over it, every request the program makes lands in its
