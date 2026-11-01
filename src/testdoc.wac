@@ -17,7 +17,7 @@ import { Answer, FAULT_UNSUPPORTED, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MO
          answered } from "std";
 import { Elements } from "./element.wac";
 import { Page } from "./page.wac";
-import { Happened, PAGE_CAPABILITY, PAGE_COUNT, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_TYPE_TEXT,
+import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_TYPE_TEXT,
          PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
 
 /** Where this document's `wac.page` numbers start, as a host would choose them. */
@@ -85,11 +85,13 @@ export struct TestDoc {
   Vec<i32> locationAsks;
   /** The location, without its `#`. */
   string location;
+  /** Whether the program is told to hold its changes and send them together, as a browser's host tells it. */
+  bool batching;
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
     TestDoc d = TestDoc(nodes, 0, 0, null, null, 0, null, null, "", Vec.create(), "", 0.0, Vec.create(), Vec.create(),
-                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "");
+                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "", false);
     d.put(0, "div", 0 - 1);
     Host h = Host.of(
       (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
@@ -106,8 +108,18 @@ export struct TestDoc {
     return d;
   }
 
+  /**
+   * A document whose program holds its changes and sends them together (`PAGE_BATCH`), as a browser's host has it
+   * do: nothing lands here until the program's turn ends, or until it asks something.
+   */
+  TestDoc batched() {
+    TestDoc d = TestDoc.create();
+    d.batching = true;
+    return d;
+  }
+
   /** The program's end of this document: the host, and where `wac.page` starts on it. */
-  PageLine line(this) { return PageLine(this.host!, BASE); }
+  PageLine line(this) { return PageLine.of(this.host!, BASE, this.batching ? 0 : PAGE_ONE_AT_A_TIME); }
 
   /** A page over this document, whose answers run it on and render its views. */
   Page page(this) {
@@ -208,7 +220,8 @@ export struct TestDoc {
         this.answer(id, Answer(FAULT_UNSUPPORTED(), "no capability " + text + " in a test document", u8[](), 0 as i64, 0 as i64, 0));
         return;
       }
-      this.answerWith(id, PAGE_VERSION(), u8[](), BASE as i64, PAGE_COUNT as i64, 0);
+      // Each change as it is made, so a test reads the document straight after the call that changed it.
+      this.answerWith(id, PAGE_VERSION(), u8[](), BASE as i64, PAGE_COUNT as i64, this.batching ? 0 : PAGE_ONE_AT_A_TIME);
       return;
     }
     if (op == OP_MONOTONIC_NANOS()) {
@@ -235,6 +248,16 @@ export struct TestDoc {
     if (k == 16) { this.said = this.said + "log " + text + "\n"; return; }
     if (k == 17) { this.said = this.said + "download " + text + "\n"; return; }
     if (k == PAGE_EVENT) { this.eventAsks.push(id); return; }
+    if (k == PAGE_BATCH) {
+      Change[] changes = batchOf(bytes);
+      this.said = this.said + "batch \{changes.len()}\n";
+      for (i32 i = 0; i < changes.len(); i++) {
+        Change c = changes[i];
+        this.request(BASE + c.op, 0, c.a, c.b, c.text, c.bytes);
+      }
+      this.answerWith(id, "", u8[](), 0 as i64, 0 as i64, 0);
+      return;
+    }
     if (k == PAGE_FRAME) {
       this.said = this.said + "frame\n";
       this.frameAsks.push(id);

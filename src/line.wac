@@ -6,9 +6,14 @@
 // (`tools/build.wac`), a desktop into one of its windows, a test into records (`testdoc.wac`). The program
 // cannot tell which, and the same module runs under all three.
 //
-// **Changes are requests nobody answers** — `host.tell` — so making a thousand elements waits for nothing,
-// and a host batches them as it likes. **Everything that comes back is an answer** to a request the program
-// made: an element's value, the next event, the next frame, the next file handed over, the next change of
+// **Changes wait for nothing, and travel together.** They are held and sent as one `PAGE_BATCH` — at the end of the
+// program's turn, and before anything the program asks, so a read sees every change made before it — and the
+// host answers the batch at once. One request a turn rather than one a change, which is what a page in a desktop's
+// window costs most, its requests crossing to the desktop; and a request, not a `host.tell`, because only what a
+// program asks is routed to a parent that provides the capability. A host that wants each change as it is made —
+// a test, reading the document after every call — says so in its answer to the lookup (`PAGE_ONE_AT_A_TIME`), and
+// is sent each change as a request nobody answers. **Everything that comes back is an answer** to a request the
+// program made: an element's value, the next event, the next frame, the next file handed over, the next change of
 // location. The program keeps one request outstanding for each stream (`Elements.follow`, `Page.follow`), and
 // asks again when it is answered — so a host never calls a program that did not ask, and a host that never
 // answers, which is what a page with no document is, costs nothing.
@@ -21,7 +26,7 @@
 // the last event the program saw in `a`'s high half. Two `i32`s in one field are `pair(high, low)`.
 
 import { Answer, Host, ask } from "std";
-import { Ticket } from "core";
+import { Buf, Ticket, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
@@ -75,8 +80,17 @@ export static i32 PAGE_FILE = 19;
 export static i32 PAGE_FRAME = 20;
 /** `text` the location the program knows → `text` the location, once it is not that: the hash, without its `#`. */
 export static i32 PAGE_LOCATION = 21;
+/**
+ * `a` how many changes, `bytes` each of them — the operation's number as a byte, `a` and `b` as eight bytes each,
+ * then `text` and `bytes` each as a four-byte length and that many bytes, all little-endian — to be done in order.
+ * → nothing, at once. What `PageLine.flush` sends, and `batchOf` reads.
+ */
+export static i32 PAGE_BATCH = 22;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 22;
+export static i32 PAGE_COUNT = 23;
+
+/** In the `flags` of the host's answer to the lookup: send each change as it is made, not batched. */
+export static i32 PAGE_ONE_AT_A_TIME = 1;
 
 /** Two `i32`s in one `i64`: `high` in the top half. */
 export i64 pair(i32 high, i32 low) { return ((high as i64) << 32) | ((low as i64) & (4294967295 as i64)); }
@@ -134,13 +148,93 @@ export Happened happenedOf(Answer a) {
                   getI32(a.bytes, 4), getI32(a.bytes, 8));
 }
 
-/** The program's end of `wac.page`: the host, and where the capability's numbers start. */
+/** One change, as a batch carries it. */
+export struct Change {
+  i32 op;
+  i64 a;
+  i64 b;
+  string text;
+  u8[] bytes;
+}
+
+void putI64(Buf b, i64 v) {
+  b.pushU32(lowOf(v) as@ u32);
+  b.pushU32(highOf(v) as@ u32);
+}
+
+i64 getI64(u8[] b, i32 at) { return pair(getI32(b, at + 4), getI32(b, at)); }
+
+/** A `PAGE_BATCH`'s changes, in order — for a host written in wac. One cut short ends the list where it stops. */
+export Change[] batchOf(u8[] bytes) {
+  Vec<Change> out = Vec.create();
+  i32 at = 0;
+  while (at + 21 <= bytes.len()) {
+    i32 op = bytes[at] as i32;
+    i64 a = getI64(bytes, at + 1);
+    i64 b = getI64(bytes, at + 9);
+    i32 tlen = getI32(bytes, at + 17);
+    if (tlen < 0 || at + 21 + tlen + 4 > bytes.len()) { break; }
+    u8[] t = u8[].filled(tlen, 0 as u8);
+    t.copyFrom(bytes, at + 21, 0, tlen);
+    i32 blen = getI32(bytes, at + 21 + tlen);
+    i32 from = at + 25 + tlen;
+    if (blen < 0 || from + blen > bytes.len()) { break; }
+    u8[] body = u8[].filled(blen, 0 as u8);
+    body.copyFrom(bytes, from, 0, blen);
+    out.push(Change(op, a, b, string.fromBytes(t), body));
+    at = from + blen;
+  }
+  return out.toArray();
+}
+
+/** The program's end of `wac.page`: the host, where the capability's numbers start, and the changes held. */
 export struct PageLine {
   Host host;
   i32 base;
+  /** Whether changes are held and sent together; false for a host that answered `PAGE_ONE_AT_A_TIME`. */
+  bool batched;
+  Buf held;
+  i32 count;
+  /** Told when a change is held and none was before — so whoever ends the turn knows one has something to send. */
+  fn<void()>? onHeld;
 
-  void tell(this, i32 op, i64 a, i64 b, string text, u8[] bytes) { this.host.tell(this.base + op, a, b, text, bytes); }
-  Ticket<Answer> ask(this, i32 op, i64 a, i64 b, string text, u8[] bytes) { return ask(this.host, this.base + op, a, b, text, bytes); }
+  /** The line to the capability that starts at `base` on `host`, as the host's answer to the lookup asked (`flags`). */
+  PageLine of(Host host, i32 base, i32 flags) {
+    return PageLine(host, base, (flags & PAGE_ONE_AT_A_TIME) == 0, Buf.create(), 0, null);
+  }
+
+  void tell(this, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+    if (!this.batched) {
+      this.host.tell(this.base + op, a, b, text, bytes);
+      return;
+    }
+    this.held.push(op as@ u8);
+    putI64(this.held, a);
+    putI64(this.held, b);
+    u8[] t = text.toBytes();
+    this.held.pushU32(t.len() as@ u32);
+    this.held.pushAll(t);
+    this.held.pushU32(bytes.len() as@ u32);
+    this.held.pushAll(bytes);
+    this.count++;
+    if (this.count == 1 && this.onHeld is not null) { this.onHeld!(); }
+  }
+
+  /** Send what is held, as one batch. Nothing, when nothing is. */
+  void flush(this) {
+    if (this.count == 0) { return; }
+    u8[] bytes = this.held.bytes();
+    i32 n = this.count;
+    this.held = Buf.create();
+    this.count = 0;
+    ask(this.host, this.base + PAGE_BATCH, n as i64, 0 as i64, "", bytes);
+  }
+
+  /** Ask, once every change made before it has gone. */
+  Ticket<Answer> ask(this, i32 op, i64 a, i64 b, string text, u8[] bytes) {
+    this.flush();
+    return ask(this.host, this.base + op, a, b, text, bytes);
+  }
 
   void make(this, i32 id, i32 parent, string tag, i32 before) { this.tell(PAGE_MAKE, id as i64, pair(parent, before), tag, u8[]()); }
   void makeText(this, i32 id, i32 parent, string text, i32 before) {

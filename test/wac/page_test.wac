@@ -398,3 +398,41 @@ export string test_a_program_finds_its_page_by_name_on_its_own_host() {
   t.eqStr(doc.said, "title found\n", "whose requests go to that host");
   return t.report();
 }
+
+export string test_a_batched_page_sends_its_changes_together_at_the_end_of_its_turn() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.batched();
+  Page page = doc.page();
+  Ticket<i32> done = startClicks(page);
+  // `clicks` made three elements and listened, then waited: the turn is not over until the page says so.
+  t.eqStr(doc.said, "", "nothing has arrived while the turn runs");
+  page.turn();
+  t.eqStr(doc.said, "batch 4\nmake 1 button\nmake 2 button\nmake 3 b\nlisten 0 click\n", "then all four, as one request");
+  doc.said = "";
+  doc.event(1, "click", UP(), 0, "", 0, 0, 0, 0 - 1, 0 - 1);
+  t.eqStr(doc.said, "batch 1\ntext 3 1\n", "an event's turn sends what it changed");
+  return t.report();
+}
+
+async i32 readsAfterMaking(Page page) {
+  Element field = page.root().append("input");
+  string v = await field.value();
+  return v.len();
+}
+
+Ticket<i32> startReads(Page page) {
+  schedule page.take;
+  return readsAfterMaking(page);
+}
+
+export string test_a_batched_page_sends_what_it_holds_before_it_asks() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.batched();
+  Page page = doc.page();
+  Ticket<i32> done = startReads(page);
+  t.eqStr(doc.said, "batch 1\nmake 1 input\nvalue 1\n", "the element it reads is made before the read");
+  doc.answerValue(0, "abc");
+  t.isTrue(done.settled(), "the answer ran it on");
+  t.eqI32(done.value(), 3, "with the value");
+  return t.report();
+}

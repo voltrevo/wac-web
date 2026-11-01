@@ -224,7 +224,7 @@ export string programSide() {
       const wacPageServer = (next, answer, post, where) => {
         // **Where `wac.page`'s numbers start here** — above every request std numbers, below the 2^20 a parent
         // numbers the capabilities it provides from.
-        const BASE = 4096, COUNT = 22;
+        const BASE = 4096, COUNT = 23;
         const NONE = new Uint8Array(0), dec = new TextDecoder(), enc = new TextEncoder();
         const lo = (v) => Number(BigInt.asIntN(32, v)), hi = (v) => Number(v >> 32n);
         const pair = (high, low) => (BigInt(high) << 32n) | BigInt(low >>> 0);
@@ -288,6 +288,21 @@ export string programSide() {
             case 19: fileAsks.push(id); return queueMicrotask(flush);
             case 20: { const f = ++lastFrame; frames.set(f, id); return send(["frame", f]); }
             case 21: locationAsks.push({ id, known: text }); return located();
+            // The changes the program held, in order, as each would have come alone; answered at once.
+            case 22: {
+              const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+              let at = 0;
+              for (let i = 0; i < Number(a) && at + 21 <= bytes.length; i++) {
+                const op = bytes[at], ca = v.getBigInt64(at + 1, true), cb = v.getBigInt64(at + 9, true);
+                const tlen = v.getUint32(at + 17, true);
+                const ctext = dec.decode(bytes.subarray(at + 21, at + 21 + tlen));
+                const blen = v.getUint32(at + 21 + tlen, true), from = at + 25 + tlen;
+                // A copy, not a view: a buffer handed to the document is moved, and this one is the batch's.
+                page(op, 0, ca, cb, ctext, bytes.slice(from, from + blen));
+                at = from + blen;
+              }
+              return answer(id, 0, "", NONE, 0n, 0n, 0);
+            }
           }
         };
         const request = (op, id, a, b, text, bytes) => {

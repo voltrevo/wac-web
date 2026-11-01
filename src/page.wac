@@ -31,7 +31,7 @@
 // ticket and runs the program on, there and then, and `drain` and `turn` finish the turn.
 
 import { Continuation, Queue, Result, Ticket, TicketBase, Vec } from "core";
-import { Answer, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS, Sys, ask, capability } from "std";
+import { Answer, FAULT_NONE, OP_CAPABILITY, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS, Sys, ask } from "std";
 import { Node, htmlOf } from "./html.wac";
 import { Element, Elements } from "./element.wac";
 import { PAGE_CAPABILITY, PageLine } from "./line.wac";
@@ -43,7 +43,7 @@ export { Attr, Head, Node, On, documentOf, htmlOf, isVoidElement } from "./html.
 export * as html from "./tags.wac";
 export { Element, ElementEvent, Listen } from "./element.wac";
 // `wac.page` itself, for whoever answers it — a desktop drawing a program into a window, or a test.
-export { PAGE_CAPABILITY, PAGE_VERSION, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
+export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, batchOf, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
          PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_COUNT, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
@@ -108,10 +108,10 @@ export struct Page {
    * from a command line has no page, and is told so rather than handed one that draws nowhere.
    */
   async Result<Page, string> open(Sys sys) {
-    match (await capability(sys.host, PAGE_CAPABILITY(), "^1")) {
-      Ok(c): { return Result.Ok(Page.over(PageLine(sys.host, c.base), sys)); }
-      Err(why): { return Result.Err(why); }
-    }
+    // `capability` asked by hand, which is what it does, for the answer's `flags`: how the host wants the changes.
+    Answer found = await ask(sys.host, OP_CAPABILITY(), 0 as i64, 0 as i64, PAGE_CAPABILITY(), "^1".toBytes());
+    if (found.fault != FAULT_NONE()) { return Result.Err(found.text); }
+    return Result.Ok(Page.over(PageLine.of(sys.host, found.n as~ i32, found.flags), sys));
   }
 
   /** A page over `line`, whose host is `sys`'s, following the document's events and location from here on. */
@@ -119,6 +119,9 @@ export struct Page {
     Vec<View> views = Vec.create();
     Vec<fn<void(string)>?> watchers = Vec.create();
     Page p = Page(line, Runner.create(), Elements.create(line), views, sys, false, "", watchers, false, null);
+    // A change held is a turn to end, whether or not a view has anything to render: a handler that only changed an
+    // element of its own still has that change to send.
+    line.onHeld = () => { p.wake(); };
     p.follow();
     return p;
   }
@@ -186,14 +189,16 @@ export struct Page {
     w!.settleWith(() => { });
   }
 
-  /** The end of a call into the program: every view renders what changed. */
+  /** The end of a call into the program: every view renders what changed, and the changes go to the host. */
   void turn(this) {
     for (i32 i = 0; i < this.views.len(); i++) { this.views.get(i).turn(); }
-    if (!this.checking) { return; }
-    for (i32 i = 0; i < this.views.len(); i++) {
-      string[] said = this.views.get(i).check();
-      for (i32 j = 0; j < said.len(); j++) { this.line.log("view check: " + said[j]); }
+    if (this.checking) {
+      for (i32 i = 0; i < this.views.len(); i++) {
+        string[] said = this.views.get(i).check();
+        for (i32 j = 0; j < said.len(); j++) { this.line.log("view check: " + said[j]); }
+      }
     }
+    this.line.flush();
   }
 
   /** The location hash, without its `#`: empty when there is none. */

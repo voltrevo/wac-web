@@ -133,9 +133,10 @@ and `.wait()` on one that has not arrived traps saying so, where on a command li
 
 **Everything a page does is a request to the program's host** ([`src/line.wac`](src/line.wac)). The program
 finds the page by name — `Page.open(sys)` asks its host for `wac.page` in a version `^1` allows — and is
-answered with a range of request numbers, one per operation. Changes to the document are requests nobody
-answers, so they never wait; everything that comes back is an answer to a request the program made — the next
-event, the next frame, the next file handed over, an element's value, the next change of location. The clock
+answered with a range of request numbers, one per operation. Changes to the document never wait: they are
+held and sent together, one request a turn (`PAGE_BATCH`), and before anything the program asks, so a read sees
+what was made before it. Everything that comes back is an answer to a request the program made — the next event,
+the next frame, the next file handed over, an element's value, the next change of location. The clock
 and timers are `std`'s, which every host answers itself.
 
 So **whoever answers draws**: a standalone page's host into the document, a desktop into one of its windows, a
@@ -146,7 +147,8 @@ exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the f
 ## Testing a page without a browser
 
 `TestDoc` is such a host: `doc.page()` is a page over it, every request the program makes lands in its
-records and in `doc.said`, and every answer is the test's to give — `fire` and `event` for events, `advance`
+records and in `doc.said` — each change as it is made, or, from `TestDoc.batched()`, together at the end of the
+turn as a browser's host has them — and every answer is the test's to give — `fire` and `event` for events, `advance`
 for the clock and the sleeps it wakes, `paint` for frames, `answerValue`, `hand` and `go`.
 [`test/wac/page_test.wac`](test/wac/page_test.wac) does that for every order in which things can arrive.
 
