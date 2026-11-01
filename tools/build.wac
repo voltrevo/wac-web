@@ -177,11 +177,7 @@ export string moduleFor(string entrySpec, string pageSpec, string spawn, bool de
        + "async i32 run(Page page) {\n"
        + (dev ? "  page.checking = true;\n" : "")
        + "  program(page);\n"
-       + "  page.turn();\n"
-       + "  while (true) {\n"
-       + "    await page.changed();\n"
-       + "    page.turn();\n"
-       + "  }\n"
+       + "  await page.keepRendering();\n"
        + "  return 0;\n"
        + "}\n";
 }

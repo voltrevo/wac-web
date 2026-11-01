@@ -7,7 +7,7 @@
 import { Check } from "./check.wac";
 import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_PICK, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
          PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
 /** Where the child's host numbers `wac.page`, and `wac.desktop`. */
@@ -33,10 +33,23 @@ struct ChildHost {
   i32 asking;
   /** What the desktop's picker answers, in turn: a path, or `""` for nothing chosen. */
   Vec<string> picks;
+  /** Each request for a window's slice of `wac.page` other than the first, as `slice:offset`. */
+  string otherSlices;
 
   void request(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
     if (op == OP_CAPABILITY() && text == DESKTOP_CAPABILITY()) {
       this.give(id, Answer(0, "1.0.0", u8[](), DESK as i64, DESKTOP_COUNT as i64, 0));
+      return;
+    }
+    if (op == DESK + DESKTOP_WINDOW) {
+      this.give(id, Answer(0, "", u8[](), 2 as i64, 0 as i64, 0));
+      return;
+    }
+    if (op >= BASE + PAGE_COUNT && op < BASE + PAGE_COUNT * 4) {
+      i32 k = op - BASE;
+      this.otherSlices = this.otherSlices + "\{k / PAGE_COUNT}:\{k % PAGE_COUNT};";
+      // A batch is answered at once; the requests a page keeps open — its next event, its location — wait.
+      if (k % PAGE_COUNT == PAGE_BATCH) { this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); }
       return;
     }
     if (op == DESK + DESKTOP_PICK) {
@@ -80,7 +93,7 @@ Rig rig() {
   Rig r = Rig(doc, desk, window, PageServer.into(desk, window, (string t) => { }, (string l) => { }), desk, "", null);
   Rig me = r;
   r.server.onTitle = (string t) => { me.title = t; };
-  ChildHost c = ChildHost(r.server, null, null, 0, Vec.create());
+  ChildHost c = ChildHost(r.server, null, null, 0, Vec.create(), "");
   Host h = Host.of(
     (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
       c.asking++;
@@ -182,5 +195,36 @@ export string test_a_program_finds_the_desktop_that_started_it_and_picks_with_it
   run.drain();
   t.isTrue(got.settled(), "both picks were answered");
   t.eqStr(got.value(), "Desktop/notes.txt;nothing was chosen", "a path, then nothing chosen");
+  return t.report();
+}
+
+async string opensAWindow(Sys sys) {
+  match (await Desktop.of(sys)) {
+    Ok(d): {
+      Result<Page, string> w = await d.openWindow("Second");
+      if (w.isErr()) { return "no window: " + w.err()!; }
+      Page p = w.ok()!;
+      p.root().append("p");
+      p.turn();
+      return "";
+    }
+    Err(why): { return "no desktop: " + why; }
+  }
+}
+
+export string test_a_program_opens_a_window_of_its_own_and_draws_in_that_windows_slice() {
+  Check t = Check.create();
+  Rig r = rig();
+  Runner run = Runner.create();
+  schedule run.take;
+  Ticket<string> got = opensAWindow(r.child.sys);
+  run.drain();
+  t.isTrue(got.settled(), "the window was opened");
+  t.eqStr(got.value(), "", "and drawn in");
+  // Its next event and its location asked for, then its title and what it drew sent, all in slice 2 — the window the
+  // desktop answered with.
+  t.eqStr(r.host!.otherSlices, "2:\{PAGE_EVENT};2:\{PAGE_LOCATION};2:\{PAGE_BATCH};2:\{PAGE_BATCH};",
+          "the window's requests went to its own slice");
+  t.eqI32(r.doc.findTag("p"), 0 - 1, "and not to the first window's");
   return t.report();
 }

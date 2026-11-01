@@ -51,7 +51,7 @@ export { TestDoc, TestNode } from "./testdoc.wac";
 export { PageServer } from "./serve.wac";
 // `wac.desktop`, for a program a desktop started: `Desktop.of(sys)`.
 export { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
-         DESKTOP_VERSION, Desktop } from "./desktop.wac";
+         DESKTOP_VERSION, DESKTOP_WINDOW, Desktop } from "./desktop.wac";
 
 
 /** `ElementEvent.mods`: which modifier keys were held. */
@@ -192,6 +192,18 @@ export struct Page {
     }
     this.waking = null;
     w!.settleWith(() => { });
+  }
+
+  /**
+   * **Render each time a view has something to render, for as long as the page lives** — what runs a page's program
+   * as a module does (`tools/build.wac`'s `moduleFor`), and `Desktop.openWindow` for each window it opens.
+   */
+  async void keepRendering(this) {
+    this.turn();
+    while (true) {
+      await this.changed();
+      this.turn();
+    }
   }
 
   /** The end of a call into the program: every view renders what changed, and the changes go to the host. */

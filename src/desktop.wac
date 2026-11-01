@@ -5,6 +5,11 @@
 // anything else — a standalone page, a command line — says it has none, which is a program's cue to do without.
 // Holding a `Sys` is enough to ask, as it is to make a `Files`: no new authority.
 //
+// **A program starts with no window** (design point 2), and opens one — or several — when it wants: `openWindow` is a
+// page drawn into a new window of the desktop's, as `Page.open` is the page a host provides. A page's program built
+// by this package's builder opens its first window by opening its page, and a program with nothing to show opens
+// none.
+//
 // **The picker is the grant.** `pick` shows the person the desktop's files; what they choose is answered as a path
 // the program's `Files` can now read — and nothing else it could not before. `open` shows a path in the desktop's
 // app for it; `note` says something in the desktop's own voice; `copy` and `paste` are the desktop's clipboard,
@@ -15,6 +20,8 @@
 
 import { Answer, FAULT_NONE, OP_CAPABILITY, Sys, ask } from "std";
 import { Result, Ticket } from "core";
+import { PAGE_CAPABILITY, PAGE_COUNT, PageLine } from "./line.wac";
+import { Page } from "./page.wac";
 
 export string DESKTOP_CAPABILITY() { return "wac.desktop"; }
 export string DESKTOP_VERSION() { return "1.0.0"; }
@@ -29,8 +36,13 @@ export static i32 DESKTOP_NOTE = 2;
 export static i32 DESKTOP_COPY = 3;
 /** → `text`: what is on the desktop's clipboard. */
 export static i32 DESKTOP_PASTE = 4;
+/**
+ * `text` a title → a window of the program's own: `n` which of its windows it is. The window's page is that window's
+ * slice of `wac.page` — `PAGE_COUNT` requests from the capability's base, times `n` — which `openWindow` makes.
+ */
+export static i32 DESKTOP_WINDOW = 5;
 /** How many request numbers the capability takes. */
-export static i32 DESKTOP_COUNT = 5;
+export static i32 DESKTOP_COUNT = 6;
 
 /** The desktop that started this program: its host, and where the capability's numbers start on it. */
 export struct Desktop {
@@ -74,4 +86,21 @@ export struct Desktop {
 
   /** What is on the desktop's clipboard. */
   async string paste(this) { return (await this.ask(DESKTOP_PASTE, "")).text; }
+
+  /**
+   * A new window of this program's own, titled `title`: the page drawn into it, which renders itself from here on
+   * (`Page.keepRendering`). `Err` when the desktop has no window to give.
+   */
+  async Result<Page, string> openWindow(this, string title) {
+    // `wac.page` looked up first, which is what routes a window's requests to the desktop at all.
+    Answer page = await ask(this.sys.host, OP_CAPABILITY(), 0 as i64, 0 as i64, PAGE_CAPABILITY(), "^1".toBytes());
+    if (page.fault != FAULT_NONE()) { return Result.Err(page.text); }
+    Answer w = await this.ask(DESKTOP_WINDOW, title);
+    if (w.fault != FAULT_NONE()) { return Result.Err(w.text); }
+    i32 base = (page.n as~ i32) + (w.n as~ i32) * PAGE_COUNT;
+    Page p = Page.over(PageLine.of(this.sys.host, base, page.flags), this.sys);
+    p.title(title);
+    p.keepRendering();
+    return Result.Ok(p);
+  }
 }
