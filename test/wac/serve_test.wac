@@ -207,6 +207,23 @@ export string test_a_child_draws_in_its_windows_shadow_root() {
   return t.report();
 }
 
+/**
+ * **A closed window says so**: what its page waits for is answered "closed", and the page hears of it
+ * (`Page.closed`), where before its request for the next event waited for ever.
+ */
+export string test_a_closed_window_ends_its_childs_page() {
+  Check t = Check.create();
+  Rig r = rig();
+  schedule r.child.take;
+  r.child.mount((Ui ui) => <Counter/>);
+  r.child.turn();
+  t.isFalse(r.child.closed().settled(), "an open window's page is not closed");
+  r.server.close();
+  r.child.turn();
+  t.isTrue(r.child.closed().settled(), "closing the window ends its page");
+  return t.report();
+}
+
 async string picks(Sys sys) {
   match (await Desktop.of(sys)) {
     Ok(d): {

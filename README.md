@@ -147,7 +147,9 @@ exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the f
 **A page served into an element of another page** — `PageServer` (`src/serve.wac`), a desktop's window — should be
 served into that element's shadow root, `element.shadow()`: its stylesheets then apply in that element and
 nowhere else, in neither direction, so the page around it cannot restyle what it draws, nor it the page around
-it. The page's own stylesheet names its variables on `:host` as well as `:root`, which matches nothing there.
+it. The page's own stylesheet names its variables on `:host` as well as `:root`, which matches nothing there. When the
+element is gone — the window closed — `server.close()` answers what the page waits for "closed", and the page's
+`page.closed()` settles: a program with several windows forgets that one.
 
 ## The site a page came from — `wac.site`
 

@@ -80,11 +80,14 @@ export struct Elements {
   Vec<Element?> byId;
   /** The number of the last event delivered to the program — what `prop` measures typing against. */
   i32 seen;
+  /** Settled when the host says no more events will come: the page was closed (`Page.closed`). */
+  Ticket<bool> ended;
 
   /** The handles over `line`, the root among them, hearing the document's events from here on. */
   Elements create(PageLine line) {
     Vec<Element?> byId = Vec.create();
-    Elements es = Elements(line, byId, 0);
+    Ticket<bool> ended;
+    Elements es = Elements(line, byId, 0, ended);
     Element root = Element.made(es, 0, "", null);
     byId.push(root);
     es.follow();
@@ -99,6 +102,12 @@ export struct Elements {
     Elements es = this;
     Ticket<Answer> t = this.line.event();
     when(t, () => {
+      // **A fault is the host saying there will be no more**: a desktop's window that was closed. Nothing is
+      // asked again, and whoever waits on the page's end hears of it.
+      if (t.value().fault != 0) {
+        if (!es.ended.settled()) { es.ended.resolve(true); }
+        return;
+      }
       Happened h = happenedOf(t.value());
       es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd);
       es.follow();

@@ -121,6 +121,12 @@ export struct Page {
     return Result.Ok(Page.over(PageLine.of(sys.host, found.n as~ i32, found.flags), sys));
   }
 
+  /**
+   * **Settled when the page is closed** — a window of a desktop's, closed by the person or the desktop — and never
+   * for a standalone page. A program with several windows forgets this one then; one with only this has ended.
+   */
+  Ticket<bool> closed(this) { return this.es.ended; }
+
   /** A page over `line`, whose host is `sys`'s, following the document's events and location from here on. */
   Page over(PageLine line, Sys sys) {
     Vec<View> views = Vec.create();

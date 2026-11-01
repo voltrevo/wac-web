@@ -22,6 +22,9 @@ import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, P
          PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_TEXT, PAGE_TITLE,
          PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt, when } from "./line.wac";
 
+/** What a closed page's requests are answered. */
+Answer closedAnswer() { return Answer(FAULT_UNSUPPORTED(), "the page was closed", u8[](), 0 as i64, 0 as i64, 0); }
+
 /** How many refusals are kept: the latest, which is what someone looking at a misbehaving window wants. */
 static i32 KEPT_REFUSALS = 32;
 
@@ -45,6 +48,8 @@ export struct PageServer {
   fn<void(string)> onLog;
   /** What the child asked for that was refused, latest last. */
   Vec<string> refused;
+  /** Closed (`close`): every request answered "closed" from now on. */
+  bool closed;
 
   /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
   PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
@@ -55,7 +60,7 @@ export struct PageServer {
     Queue<Answer> handed;
     Queue<Ticket<Answer>> wanting;
     return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
-                      Vec.create());
+                      Vec.create(), false);
   }
 
   /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
@@ -65,8 +70,31 @@ export struct PageServer {
                     (i32 k, i64 a, i64 b, string text, u8[] bytes) => s.answer(k, a, b, text, bytes));
   }
 
+  /**
+   * **The window is gone.** What the child is waiting for — its next event, its next file — is answered "closed",
+   * as is everything it asks from now on, so its page knows (`Page.closed`) instead of waiting for ever.
+   */
+  void close(this) {
+    this.closed = true;
+    while (true) {
+      Ticket<Answer>? t = this.asking.pop();
+      if (t is null) { break; }
+      t!.resolve(closedAnswer());
+    }
+    while (true) {
+      Ticket<Answer>? t = this.wanting.pop();
+      if (t is null) { break; }
+      t!.resolve(closedAnswer());
+    }
+  }
+
   /** The child's request `k` of the capability, answered — at once, or when what it waits for arrives. */
   Ticket<Answer> answer(this, i32 k, i64 a, i64 b, string text, u8[] bytes) {
+    if (this.closed) {
+      Ticket<Answer> t;
+      t.resolve(closedAnswer());
+      return t;
+    }
     if (k == PAGE_BATCH) {
       Change[] changes = batchOf(bytes);
       for (i32 i = 0; i < changes.len(); i++) {
