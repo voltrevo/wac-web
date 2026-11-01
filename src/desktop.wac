@@ -10,6 +10,10 @@
 // by this package's builder opens its first window by opening its page, and a program with nothing to show opens
 // none.
 //
+// **More than it is handed is asked for, once** (design point 6, as the owner answered it): `askFor` names a path and
+// whether the program would change it too, the desktop asks the person, and their answer is remembered for the
+// program — the next time it starts it holds what it was allowed, and is not asked again.
+//
 // **The picker is the grant.** `pick` shows the person the desktop's files; what they choose is answered as a path
 // the program's `Files` can now read — and nothing else it could not before. `open` shows a path in the desktop's
 // app for it; `note` says something in the desktop's own voice; `copy` and `paste` are the desktop's clipboard,
@@ -41,8 +45,13 @@ export static i32 DESKTOP_PASTE = 4;
  * slice of `wac.page` — `PAGE_COUNT` requests from the capability's base, times `n` — which `openWindow` makes.
  */
 export static i32 DESKTOP_WINDOW = 5;
+/**
+ * `text` a path, `a` 1 to change what is there too → `flags` 0 when the program may from now on, 1 when not. The
+ * desktop asks the person once and remembers their answer for this program.
+ */
+export static i32 DESKTOP_ASK = 6;
 /** How many request numbers the capability takes. */
-export static i32 DESKTOP_COUNT = 6;
+export static i32 DESKTOP_COUNT = 7;
 
 /** The desktop that started this program: its host, and where the capability's numbers start on it. */
 export struct Desktop {
@@ -86,6 +95,17 @@ export struct Desktop {
 
   /** What is on the desktop's clipboard. */
   async string paste(this) { return (await this.ask(DESKTOP_PASTE, "")).text; }
+
+  /**
+   * Ask to read `path` — and to change what is there too, when `write`. The person is asked once; `Ok` when the
+   * program may from now on, `Err` saying why not.
+   */
+  async Result<void, string> askFor(this, string path, bool write) {
+    Answer a = await ask(this.sys.host, this.base + DESKTOP_ASK, (write ? 1 : 0) as i64, 0 as i64, path, u8[]());
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    if (a.flags != 0) { return Result.Err(a.text == "" ? "not allowed" : a.text); }
+    return Result.Ok();
+  }
 
   /**
    * A new window of this program's own, titled `title`: the page drawn into it, which renders itself from here on

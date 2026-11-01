@@ -51,7 +51,7 @@ export { TestDoc, TestNode } from "./testdoc.wac";
 export { PageServer } from "./serve.wac";
 // `wac.desktop`, for a program a desktop started: `Desktop.of(sys)`.
 export { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
-         DESKTOP_VERSION, DESKTOP_WINDOW, Desktop } from "./desktop.wac";
+         DESKTOP_VERSION, DESKTOP_WINDOW, DESKTOP_ASK, Desktop } from "./desktop.wac";
 
 
 /** `ElementEvent.mods`: which modifier keys were held. */
