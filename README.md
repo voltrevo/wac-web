@@ -100,8 +100,9 @@ page is built with `--grant read,write`; without one they are refused, saying wh
 and so is `sys.cli`, which is no way around the grants. The clock, randomness and output need none. wac's
 `packages/platform/example/notes.wac` keeps a note that survives a reload.
 
-A page built with `--spawn <export>` can start copies of itself: `sys.procs().spawnSelf(args, …)` runs
-`export async i32 <export>(Sys sys)` in a worker of its own, with those arguments, its input fed by the
+A page built with `--spawn <export>` can start copies of itself: `sys.procs().spawnSelf(args, …)` starts its
+module again in a worker of its own — where there is no document, so it runs `export async i32 <export>(Sys sys)`
+instead — with those arguments, its input fed by the
 parent, its output and errors read back on handles, and — when asked — its files reached through the
 parent's. That is how a shell's pipeline stages are processes in a page.
 wac's `packages/platform/example/procs.wac` is the smallest one: a page that
@@ -147,24 +148,26 @@ exports: `PAGE_*` for the operations, `pair`, `quad` and `eventAnswer` for the f
 `TestDoc` is such a host: `doc.page()` is a page over it, every request the program makes lands in its
 records and in `doc.said`, and every answer is the test's to give — `fire` and `event` for events, `advance`
 for the clock and the sleeps it wakes, `paint` for frames, `answerValue`, `hand` and `go`.
-[`test/wac/page_test.wac`](test/wac/page_test.wac) does that for every order in which things can arrive. A
-page's `Sys` is a `World` built from a `System` of lambdas, answered by hand with `answered` —
-[`test/wac/system_test.wac`](test/wac/system_test.wac).
+[`test/wac/page_test.wac`](test/wac/page_test.wac) does that for every order in which things can arrive.
 
 ## Building one
 
     wac run --allow-read --allow-write --allow-run tools/build.wac \
         <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
-`tools/build.wac` writes three files: `page.wac`, a wrapper exporting `PageHost` — the one thing the
-browser's side holds, with the page in a private field, `start`, and `answer` for every answer the host
-gives; `page.js`, that wrapper through `wac bindgen --script`; and `index.html`, which holds both with the
-host. The host is two halves that talk by messages: the program's half answers `wac.page` — each change
-the program asks for becomes a message, and each event, frame, file and value the document sends back
-answers the request waiting for it — and the document's half applies each message. By default the
-program's half runs in a worker started from the page's own text; `--in-page` joins the two halves directly
-on the page's thread. Neither half makes a decision; everything a page does is in `src/`. Because the page is
-private, none of its interior crosses into JavaScript: the glue is two classes, `PageHost` and `System`.
+`tools/build.wac` writes three files: `page.wac`, **the page's program as a module** — a `main(Sys sys)` that
+opens the page its host provides, runs your `main(Page page)`, and renders each time a view has something to
+render — then `page.wasm`, that module as `wac build` makes it, and `index.html`, which holds the module and the
+host. A host with no page — a copy started by `spawnSelf`, or a command line — runs `--spawn`'s export instead,
+or says it has no page. So the same `page.wasm` runs in this page, from a command line, or in a desktop's window.
+
+The host is two halves that talk by messages. The program's half drives the module from its manifest, as it
+drives every module a page starts, and answers `wac.page` over the requests every program makes: each change the
+program asks for becomes a message, and each event, frame, file and value the document sends back answers the
+request waiting for it. The document's half applies each message. By default the program's half runs in a
+worker started from the page's own text; `--in-page` joins the two halves directly on the page's thread. Neither
+half makes a decision; everything a page does is in `src/`, and what it was not granted is refused naming the
+`--grant` that would allow it.
 
 **`--dev` is a development build**: after every turn each view renders everything again and logs, to the
 console, each place the page does not show what a component renders — which happens only when a render
@@ -176,10 +179,10 @@ outside image, style sheet or font — and an inline handler or a script element
 document by any route does not run. A test driving a built page waits with `waitInPage` from
 `test/harness.ts`, since Playwright's string `waitForFunction` is an `eval` the policy refuses.
 
-The output directory has to be inside the directory the build runs in, since the wrapper is written
+The output directory has to be inside the directory the build runs in, since the page's module is written
 there and imports the program.
 
-`--page` names the module the wrapper imports `Page` from: `web` by default, which is how a project
+`--page` names the module the page's module imports `Page` from: `web` by default, which is how a project
 that depends on this package spells it, and `./src/page.wac` from this repository's root.
 
 ## Where it is used

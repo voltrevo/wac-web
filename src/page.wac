@@ -21,14 +21,17 @@
 // by default, so a program that computes for a long time costs its own responsiveness and not the tab's; on
 // the page's own thread with `--in-page`. Nothing here can tell.
 //
-// **Waiting resumes at once.** The program runs with this page as its schedule target (spec ch35) —
-// when it starts and each time an answer arrives — so each machine that suspends hands its continuation
-// to `take`, which attaches it to the ticket it waits on. An answer settles its ticket and runs the
-// program on, right there, until it waits again; then every view renders (`answered`).
+// **A page's program is a module like any other** (`tools/build.wac`'s `moduleFor`): a `main(Sys sys)` that opens
+// the page, runs the program's `main(Page page)`, and renders each time a view has something to render
+// (`changed`, then `turn`). Its host runs it on as answers arrive, as it runs every program, and the render waits
+// behind what the program was doing, so it comes once a handler is done rather than in the middle of one.
+//
+// **A test runs it on by hand** (`TestDoc`): with this page as the schedule target (spec ch35), each machine that
+// suspends hands its continuation to `take`, which attaches it to the ticket it waits on; an answer settles the
+// ticket and runs the program on, there and then, and `drain` and `turn` finish the turn.
 
 import { Continuation, Queue, Result, Ticket, TicketBase, Vec } from "core";
 import { Answer, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS, Sys, ask, capability } from "std";
-import { System, World } from "./system.wac";
 import { Node, htmlOf } from "./html.wac";
 import { Element, Elements } from "./element.wac";
 import { PAGE_CAPABILITY, PageLine } from "./line.wac";
@@ -45,8 +48,6 @@ export { PAGE_CAPABILITY, PAGE_VERSION, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PA
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 
-// A page's system — `page.sys` — is `system.wac`, exported from here because a package is one module.
-export { Process, READ_DATA, READ_END, STAT_DIR, STAT_EXISTS, STAT_FILE, System, World, processAnswered } from "./system.wac";
 
 /** `ElementEvent.mods`: which modifier keys were held. */
 export static i32 MOD_SHIFT = 1;
@@ -79,10 +80,10 @@ export struct Page {
   /** The views mounted, rendered at the end of every call into the program. */
   Vec<View> views;
   /**
-   * **What the build granted** (`design/system/0012`): the files, clock, randomness and output a page's
-   * program has, as a `Sys` like the one a command-line program is handed. `main` is always
-   * `main(Page page)`; what this `Sys`'s `Cli` was not granted it refuses, naming the `--grant` that
-   * would allow it. Its host is the one the page's requests go to.
+   * **What the host granted** (`design/system/0012`): the files, clock, randomness and output a page's
+   * program has — the `Sys` its module was started with, as a command-line program's is. A standalone page's
+   * host grants what the build said (`--grant read,write`) and refuses the rest, naming the flag. Its host is
+   * the one the page's requests go to.
    */
   Sys sys;
   /**
@@ -98,6 +99,9 @@ export struct Page {
   string at;
   /** Who hears each change of `at`, by slot; a stopped watcher's slot is null. */
   Vec<fn<void(string)>?> watchers;
+  /** Whether a view has had something to render since `changed` last answered, and who waits to hear it. */
+  bool woken;
+  Ticket<void>? waking;
 
   /**
    * **The page the program's host provides**, found by name: `Err` says why there is none — a program run
@@ -114,7 +118,7 @@ export struct Page {
   Page over(PageLine line, Sys sys) {
     Vec<View> views = Vec.create();
     Vec<fn<void(string)>?> watchers = Vec.create();
-    Page p = Page(line, Runner.create(), Elements.create(line), views, sys, false, "", watchers);
+    Page p = Page(line, Runner.create(), Elements.create(line), views, sys, false, "", watchers, false, null);
     p.follow();
     return p;
   }
@@ -150,9 +154,36 @@ export struct Page {
   View mountIn(this, Element host, fn<Node(Ui)> draw) {
     Page page = this;
     View v = View.create(host, (i32 ms, fn<void()> f) => { page.sleep(ms).whenSettled(f); });
+    v.onDirty = () => { page.wake(); };
     this.views.push(v);
     v.mount(draw);
     return v;
+  }
+
+  /**
+   * **Settles once a view has something to render** — at once, if one has since this last answered. What runs a
+   * page as a module awaits it and calls `turn`: the wait is queued behind whatever the program was doing, so the
+   * render comes once the program has run on, not in the middle of a handler.
+   */
+  Ticket<void> changed(this) {
+    Ticket<void> t;
+    if (this.woken) {
+      this.woken = false;
+      t.settleWith(() => { });
+      return t;
+    }
+    this.waking = t;
+    return t;
+  }
+
+  void wake(this) {
+    Ticket<void>? w = this.waking;
+    if (w is null) {
+      this.woken = true;
+      return;
+    }
+    this.waking = null;
+    w!.settleWith(() => { });
   }
 
   /** The end of a call into the program: every view renders what changed. */
@@ -271,23 +302,4 @@ export struct Runner {
   void drain(this) {
     while (Continuation k matches this.ready.pop()) { k.call(); }
   }
-}
-
-// ── What the host calls ───────────────────────────────────────────────────────
-
-/**
- * The host answered request `req` — of the page or of the program's system — on `world`, the host the page
- * was opened on: settle its ticket and run on whatever was waiting for it, under the page as the schedule
- * target, then render every view. An answer from inside the request that asked runs nothing on: that request
- * is still running.
- *
- * Run under the page because this is where the program resumes: a machine hands the continuation of its next
- * wait to the target in force when it is resumed, and with none in force here that wait would be dropped.
- */
-export void answered(Page page, World world, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m,
-                     i32 flags) {
-  schedule page.take;
-  if (!world.deliver(req, fault, text, bytes, n, m, flags)) { return; }
-  page.drain();
-  page.turn();
 }

@@ -13,10 +13,10 @@
 // fired at what the view drew run the program on and render, as a browser's would. `template/test` does.
 
 import { Vec } from "core";
-import { Answer, FAULT_UNSUPPORTED, OP_CAPABILITY, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS } from "std";
+import { Answer, FAULT_UNSUPPORTED, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS, Sys,
+         answered } from "std";
 import { Elements } from "./element.wac";
-import { Page, answered } from "./page.wac";
-import { System, World } from "./system.wac";
+import { Page } from "./page.wac";
 import { Happened, PAGE_CAPABILITY, PAGE_COUNT, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_TYPE_TEXT,
          PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
 
@@ -52,8 +52,11 @@ export struct TestDoc {
   Vec<TestNode?> nodes;
   i32 ops;
   i32 seq;
-  /** The host the program's requests go to, once made. */
-  World? world;
+  /** The host the program's requests go to, and the `Sys` over it, once made. */
+  Host? host;
+  Sys? sys;
+  /** How deep in the program's requests this is: an answer given inside one is that request's, and runs nothing on. */
+  i32 asking;
   /** The handles' owner, once the elements exist. */
   Elements? es;
   /** The page they belong to, when there is one: an answer then runs it on, and its views render. */
@@ -85,20 +88,30 @@ export struct TestDoc {
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
-    TestDoc d = TestDoc(nodes, 0, 0, null, null, null, "", Vec.create(), "", 0.0, Vec.create(), Vec.create(), Vec.create(),
-                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "");
+    TestDoc d = TestDoc(nodes, 0, 0, null, null, 0, null, null, "", Vec.create(), "", 0.0, Vec.create(), Vec.create(),
+                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "");
     d.put(0, "div", 0 - 1);
-    d.world = World.create(System((i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => { d.request(op, id, a, b, text, bytes); },
-                                  (i32 code) => { }), 0);
+    Host h = Host.of(
+      (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
+        d.asking++;
+        d.request(op, id, a, b, text, bytes);
+        d.asking--;
+      },
+      // Nothing is ever waiting to be collected — every answer is given as it is — so a wait that would block cannot.
+      (i32[] ids, i32 millis) => millis == 0 ? 0 - 1 : HOST_CANNOT_WAIT(),
+      (i32 code) => { },
+      () => false);
+    d.host = h;
+    d.sys = Sys.__wacOn(h);
     return d;
   }
 
   /** The program's end of this document: the host, and where `wac.page` starts on it. */
-  PageLine line(this) { return PageLine(this.world!.host, BASE); }
+  PageLine line(this) { return PageLine(this.host!, BASE); }
 
   /** A page over this document, whose answers run it on and render its views. */
   Page page(this) {
-    Page p = Page.over(this.line(), this.world!.sys);
+    Page p = Page.over(this.line(), this.sys!);
     this.owner = p;
     this.es = p.es;
     return p;
@@ -113,13 +126,21 @@ export struct TestDoc {
 
   // ── Answering ──────────────────────────────────────────────────────────────
 
-  /** Answer request `id` — at once if it is still being asked, and running the page on if not. */
+  /**
+   * Answer request `id`. **From outside the program's requests it runs the page on**, under the page as its schedule
+   * target, as a host's turn would: what the answer settled runs, then every view renders. Inside one it only settles:
+   * the request that asked is still running.
+   */
   void answer(this, i32 id, Answer a) {
-    if (this.owner is not null) {
-      answered(this.owner!, this.world!, id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
+    if (this.owner is null || this.asking > 0) {
+      answered(this.host!, id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
       return;
     }
-    this.world!.deliver(id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
+    Page p = this.owner!;
+    schedule p.take;
+    answered(this.host!, id, a.fault, a.text, a.bytes, a.n, a.m, a.flags);
+    p.drain();
+    p.turn();
   }
 
   void answerWith(this, i32 id, string text, u8[] bytes, i64 n, i64 m, i32 flags) {

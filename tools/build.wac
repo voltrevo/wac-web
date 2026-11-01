@@ -150,83 +150,61 @@ export string relativeTo(string from, string to) {
 }
 
 /**
- * The wrapper: the program's `main`, and `PageHost`, the one thing the browser's side holds.
+ * **The page's program as a module**: a `main(Sys sys)` any host can start, which opens the page that host provides
+ * (`Page.open`), runs the program's `main(Page page)` with it, and renders each time a view has something to render
+ * (`Page.changed`) for as long as the page is open. `wac build` makes it a module like any other — so a standalone
+ * page's host runs it as it runs every module it is handed, and a desktop can start the same file in a window.
  *
- * **Not `Host`**, which wac's `packages/fs` and `packages/url` both declare: in a page whose program reaches
- * them, the wrapper's struct was keyed apart from theirs and the glue's class by that name did not
- * exist — "Host is not defined" on load.
+ * **A host with no page** — a copy of the page started by `spawnSelf`, which has no document, or a command line —
+ * runs `spawn`'s export, `async i32 <spawn>(Sys sys)`, when the build names one, and otherwise says what it is and
+ * stops.
  *
- * **`PageHost` is opaque on purpose.** Its page is a private field, so the glue `wac bindgen` writes for
- * it has no members to bind but its methods — and none of the page's queues, tickets and
- * vectors cross into JavaScript, where nothing could use them. Handing over the `Page` itself did:
- * 24 classes and 71 KB of glue for a counter.
+ * **It never returns while the page is open**: a page's program usually returns as soon as it has mounted its view,
+ * and the page lives on in its handlers.
  */
-export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string spawn, bool dev) {
-  string w = "// Written by web's tools/build.wac — the calls the host makes, and the program they run.\n"
-           + "import { main" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
-           + "import { PAGE_CAPABILITY, Page, PageLine, Runner, System, World, answered"
-           + (spawn != "" ? ", Process, processAnswered" : "")
-           + " } from \"\{pageSpec}\";\n"
-           + "import { Answer, OP_CAPABILITY" + (spawn != "" ? ", Sys" : "") + ", ask } from \"std\";\n"
-           + "import { Ticket } from \"core\";\n\n"
-           + "export struct PageHost {\n"
-           + "  private World world;\n"
-           + "  private Page? page;\n\n";
-  // **The world is made under a schedule of its own**, so the scheduler it builds does not become the program's
-  // default target: everything that resumes the program comes through the host, and the host resumes it under the
-  // page. Its `Sys` is `page.sys`, holding what the build granted.
-  w = w + "  PageHost create(System system) {\n"
-        + "    Runner r = Runner.create();\n"
-        + "    schedule r.take;\n"
-        + "    return PageHost(World.create(system, \{grants}), null);\n"
-        + "  }\n\n"
-        // **An answer before the page is open is the lookup's own**, or the first location's: given inside the
-        // request that asked, so it runs nothing on.
-        + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
-        + "    if (this.page is null) {\n"
-        + "      this.world.deliver(req, fault, text, bytes, n, m, flags);\n"
-        + "      return;\n"
-        + "    }\n"
-        + "    answered(this.page!, this.world, req, fault, text, bytes, n, m, flags);\n"
-        + "  }\n";
-  // **The page is found by name, as any program finds it**, and the host here answers the lookup at once, so it is
-  // read straight off its ticket rather than awaited: nothing has run yet that could wait.
-  w = w + "\n  /** Open the page this host provides, then run the program with it as its schedule target until it first waits. */\n"
-        + "  void start(this) {\n"
-        + "    Ticket<Answer> found = ask(this.world.host, OP_CAPABILITY(), 0 as i64, 0 as i64, PAGE_CAPABILITY(), \"^1\".toBytes());\n"
-        + "    if (!found.settled() || found.value().fault != 0) {\n"
-        + "      trap \"the page's host does not provide \" + PAGE_CAPABILITY() + (found.settled() ? \": \" + found.value().text : \"\");\n"
-        + "    }\n"
-        + "    Page page = Page.over(PageLine(this.world.host, found.value().n as~ i32), this.world.sys);\n"
-        + (dev ? "    page.checking = true;\n" : "")
-        + "    this.page = page;\n"
-        + "    schedule page.take;\n"
-        + "    main(page);\n"
-        + "    page.drain();\n"
-        + "    page.turn();\n"
-        + "  }\n";
-  // **A copy of the page started by `spawnSelf` is a process, not a page**: no document, a `Sys` holding
-  // what its parent gave it, and `spawn`'s export as its program. Opaque for the reason `PageHost` is.
-  //
-  // **Greeted before the program runs**, as the program adapter greets before an `async` `main`: a spawned process
-  // learns whether its parent serves it files without waiting, which a page cannot do. Asked on the program's first
-  // `files()` instead, every applet the browser terminal spawned trapped there.
-  string spawned = spawn == "" ? "" : "\nasync i32 __wacSpawned(Sys sys) {\n"
-    + "  await sys.__wacGreet();\n"
-    + "  return await \{spawn}(sys);\n"
-    + "}\n"
-    + "\nexport struct Spawned {\n"
-    + "  private Process p;\n\n"
-    + "  Spawned create(System system, i32 grants) { return Spawned(Process.create(system, grants)); }\n\n"
-    + "  void start(this) {\n"
-    + "    schedule this.p.runner.take;\n"
-    + "    this.p.started(__wacSpawned(this.p.world.sys));\n"
-    + "  }\n\n"
-    + "  void answer(this, i32 req, i32 fault, string text, u8[] bytes, i64 n, i64 m, i32 flags) {\n"
-    + "    processAnswered(this.p, req, fault, text, bytes, n, m, flags);\n"
-    + "  }\n"
-    + "}\n";
-  return w + "}\n" + spawned;
+export string moduleFor(string entrySpec, string pageSpec, string spawn, bool dev) {
+  string withoutPage = spawn != "" ? "      return await \{spawn}(sys);\n"
+    : "      sys.stderr().line(\"this is a page, and its host has none: \" + why);\n      return 1;\n";
+  return "// Written by web's tools/build.wac — the page's program, as a module any host that provides `wac.page` runs.\n"
+       + "import { main as program" + (spawn != "" ? ", " + spawn : "") + " } from \"\{entrySpec}\";\n"
+       + "import { Page } from \"\{pageSpec}\";\n"
+       + "import { Sys } from \"std\";\n\n"
+       + "export async i32 main(Sys sys) {\n"
+       + "  match (await Page.open(sys)) {\n"
+       + "    Ok(page): { return await run(page); }\n"
+       + "    Err(why): {\n" + withoutPage + "    }\n"
+       + "  }\n"
+       + "}\n\n"
+       + "async i32 run(Page page) {\n"
+       + (dev ? "  page.checking = true;\n" : "")
+       + "  program(page);\n"
+       + "  page.turn();\n"
+       + "  while (true) {\n"
+       + "    await page.changed();\n"
+       + "    page.turn();\n"
+       + "  }\n"
+       + "  return 0;\n"
+       + "}\n";
+}
+
+/** `bytes` as base64, which is how the page carries its module: as text in an element the browser does not run. */
+export string base64(u8[] bytes) {
+  string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  u8[] a = alphabet.toBytes();
+  i32 n = bytes.len();
+  u8[] out = u8[].filled(((n + 2) / 3) * 4, '=' as u8);
+  i32 o = 0;
+  for (i32 i = 0; i < n; i += 3) {
+    i32 b0 = bytes[i] as i32;
+    i32 b1 = i + 1 < n ? bytes[i + 1] as i32 : 0;
+    i32 b2 = i + 2 < n ? bytes[i + 2] as i32 : 0;
+    out[o] = a[b0 >> 2];
+    out[o + 1] = a[((b0 & 3) << 4) | (b1 >> 4)];
+    if (i + 1 < n) { out[o + 2] = a[((b1 & 15) << 2) | (b2 >> 6)]; }
+    if (i + 2 < n) { out[o + 3] = a[b2 & 63]; }
+    o += 4;
+  }
+  return string.fromBytes(out);
 }
 
 /**
@@ -236,15 +214,14 @@ export string wrapperFor(string entrySpec, string pageSpec, i32 grants, string s
  * on the page — and touches nothing of the document itself; a frame is the document's to give, and the clock and
  * timers are the system's.
  *
- * `wacProgram(post, where)` starts the program at location `where` and answers `receive`. `wacPageServer` is the
- * same layer as plain JavaScript, `request`, `exit` and `receive`, for whatever else is to draw into this
- * document. A buffer is handed over rather than copied when it is the whole of its own memory, which is what
- * `wac bindgen` gives a `u8[]`.
+ * `wacPageServer(next, answer, post, where)` answers the lookup and the capability's range, passes every other
+ * request to `next`, sends the document what `post` takes, and starts at location `where`; it answers `request`,
+ * and `receive` for what the document sends back. A buffer is handed over rather than copied when it is the whole
+ * of its own memory.
  */
 export string programSide() {
   return """
-      const wacPageServer = (answer, me, post, where) => {
-        const s = wacServer(answer, me);
+      const wacPageServer = (next, answer, post, where) => {
         // **Where `wac.page`'s numbers start here** — above every request std numbers, below the 2^20 a parent
         // numbers the capabilities it provides from.
         const BASE = 4096, COUNT = 22;
@@ -325,7 +302,7 @@ export string programSide() {
             return answer(id, 0, "1.0.0", NONE, BigInt(BASE), BigInt(COUNT), 0);
           }
           if (op >= BASE && op < BASE + COUNT) return page(op - BASE, id, a, b, text, bytes);
-          return s.request(op, id, a, b, text, bytes);
+          return next(op, id, a, b, text, bytes);
         };
         const receive = (m) => {
           switch (m[0]) {
@@ -336,14 +313,7 @@ export string programSide() {
             case "timer": { const id = frames.get(m[1]); frames.delete(m[1]); if (id !== undefined) answer(id, 0, "", NONE, 0n, 0n, 0); return; }
           }
         };
-        return { request, exit: s.exit, receive };
-      };
-      const wacProgram = (post, where) => {
-        let host = null;
-        const p = wacPageServer((...a) => host.answer(...a), { child: false, args: [], cwd: "/", post: null }, post, where);
-        host = PageHost.create(System.of(p.request, p.exit));
-        host.start();
-        return p.receive;
+        return { request, receive };
       };
       """;
 }
@@ -390,12 +360,8 @@ export string systemSide() {
       // copy of one started by `spawnSelf`, or a module started by `spawn`, whose arguments, directory and
       // streams its parent supplied.
       //
-      // `wacServer` is the requests as plain JavaScript, `request` and `exit`: what a module the page was
-      // handed is driven with (`wacModule`), and what `wacSystem` wraps as the page's own `System`.
-      const wacSystem = (answer, me) => {
-        const s = wacServer(answer, me);
-        return System.of(s.request, s.exit);
-      };
+      // `wacServer` is the requests as plain JavaScript, `request` and `exit`: what every module the page runs is
+      // served by (`wacServe`), its own program among them.
       const wacServer = (answer, me) => {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
@@ -548,7 +514,6 @@ export string systemSide() {
             case 19: return read(id, me.stdin);
             case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
             case 27: return spawn(id, partsOf(bytes), n, text, Number(b), moduleOf(bytes));
-            case 49: return spawn(id, partsOf(bytes), n, text, Number(b), null);
             case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
             case 25: {
               const to = handles.get(n);
@@ -697,8 +662,7 @@ export string systemSide() {
               }
             })();
           }
-          const init = wasm === null ? ["init", { args, grants, cwd, serveFs }] : ["module", { wasm, args, grants, cwd, serveFs }];
-          wacAskPage(["start", ...init], wasm === null ? [] : wacOwn(wasm)).then(([id, port, why]) => {
+          wacAskPage(["start", "module", { wasm, args, grants, cwd, serveFs }], wacOwn(wasm)).then(([id, port, why]) => {
             if (port === null) {
               if (dropped.delete(req)) return;
               return answer(req, 5, "the program could not be started: " + why, NONE, 0n, 0n, 0);
@@ -719,25 +683,6 @@ export string systemSide() {
             ok(req, NONE, BigInt(h), (BigInt(eh) & 0xffffffffn) | (BigInt(fh) << 32n));
           });
         }
-      };
-      """;
-}
-
-/**
- * A copy of the page started by `spawnSelf`, as the worker it is: its input and the answers to its
- * questions arrive as messages from the parent, and everything else is the system half as a child.
- */
-export string childSide() {
-  return """
-      // `port` is this child's end of the channel to its parent, which the page's thread made when it started it.
-      const wacChild = (init, port) => {
-        const stdin = wacQueue(), fsIn = wacQueue();
-        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
-                     post: (m, transfer) => port.postMessage(m, transfer ?? []) };
-        port.onmessage = (e) => wacFromParent(e.data, stdin, fsIn);
-        let p = null;
-        p = Spawned.create(wacSystem((...a) => p.answer(...a), me), init.grants);
-        p.start();
       };
       """;
 }
@@ -903,7 +848,9 @@ export string moduleSide() {
         const server = wacServer(answer, me);
         const looks = (op, a) => op === 9 || op === 13 || op === 47 || op === 14 || (op === 61 && Number(a) === 0);
         const changes = (op) => op === 10 || op === 15 || op === 16 || op === 17 || op === 61 || op === 52 || op === 60;
-        const notHanded = (what) => "Not granted to this application: the program that started it did not hand it `" + what + "`";
+        // The page's own program was granted what the build said; anything else, what the program that started it handed it.
+        const notHanded = (what) => "Not granted to this application: " + (me.child
+          ? "the program that started it did not hand it `" + what + "`" : "the page was built without `--grant " + what + "`");
         const ok = (id) => answer(id, 0, "", NONE, 0n, 0n, 0);
         const request = (op, id, a, b, text, bytes) => {
           const was = asking;
@@ -964,24 +911,21 @@ export string moduleSide() {
         };
       };
 
-      // ── A module the page was handed, as a process: `OP_SPAWN`'s other half. ─────────────────────────────────
-      const wacModule = (init, port) => {
-        const stdin = wacQueue(), fsIn = wacQueue();
-        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
-                     post: (m, transfer) => port.postMessage(m, transfer ?? []) };
-        port.onmessage = (e) => wacFromParent(e.data, stdin, fsIn);
-        const said = (text) => me.post(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
-        const wasm = init.wasm;
+      // ── A module, run: driven from its manifest, served by `wacServe`, and run on as answers arrive. ───────────
+      //
+      // `layered`, when given, stands between the module and `wacServe`: it is handed the server's `request` and an
+      // `answer` for its own answers — delivered at once inside a request, and between turns otherwise, as the
+      // server's are — and answers the `request` the module makes. The page's program runs under `wac.page` that way.
+      // `said` is where a module that cannot run says why. Answers whatever the layer answered.
+      const wacRun = (wasm, me, grants, layered, said) => {
         const mod = new WebAssembly.Module(wasm);
         const manifest = wacManifestOf(mod);
         if (manifest === null) {
           said("this is not a wac program: it carries no wac.manifest section");
-          me.post(["exit", 126]);
-          close();
-          return;
+          return null;
         }
         const { app } = wacDrive(mod, manifest);
-        let host = null, run = null, finished = false, turning = false;
+        let host = null, run = null, finished = false, turning = false, depth = 0;
         const arrived = [];
         const deliver = (a) => { if (!finished) app.__wacAnswered(host, ...a); };
         const turn = () => {
@@ -997,7 +941,12 @@ export string moduleSide() {
           arrived.push(a);
           if (!turning) { turning = true; setTimeout(turn, 0); }
         };
-        const s = wacServe(me, wasm, Number(init.grants), deliver, later);
+        const s = wacServe(me, wasm, grants, deliver, later);
+        const top = layered ? layered(s.request, (...a) => depth > 0 ? deliver(a) : later(a)) : { request: s.request };
+        const request = (...r) => {
+          depth++;
+          try { return top.request(...r); } finally { depth--; }
+        };
         const settle = () => {
           if (finished || run === null || !app.__wacDone(run)) return;
           finished = true;
@@ -1014,7 +963,7 @@ export string moduleSide() {
         try {
           // **A program that takes nothing has no host**: its `main` has no parameter and the module exports no
           // `__wacHost`, so there is nothing to make and nothing it will ask.
-          if (typeof app.__wacHost === "function") host = app.__wacHost(s.request, waitAny, exitWith, interrupted);
+          if (typeof app.__wacHost === "function") host = app.__wacHost(request, waitAny, exitWith, interrupted);
           if (typeof app.__wacStart === "function") {
             run = app.__wacStart(host);
             settle();
@@ -1032,6 +981,30 @@ export string moduleSide() {
             s.exit(134);
           }
         }
+        return top;
+      };
+
+      // ── A module the page was handed, as a process: `OP_SPAWN`'s other half. ─────────────────────────────────
+      const wacModule = (init, port) => {
+        const stdin = wacQueue(), fsIn = wacQueue();
+        const me = { child: true, served: !!init.serveFs, args: init.args, cwd: init.cwd || "/", stdin, fsIn,
+                     post: (m, transfer) => port.postMessage(m, transfer ?? []) };
+        port.onmessage = (e) => wacFromParent(e.data, stdin, fsIn);
+        const said = (text) => me.post(["err", new TextEncoder().encode(text + String.fromCharCode(10))]);
+        if (wacRun(init.wasm, me, Number(init.grants), null, said) === null) {
+          me.post(["exit", 126]);
+          close();
+        }
+      };
+
+      // ── The page's own program: a module like any other, under `wac.page`. ─────────────────────────────────────
+      //
+      // It holds what the build granted (`grants`), draws by sending `post` what the document applies, starts at
+      // location `where`, and answers `receive` for what the document sends back.
+      const wacPage = (wasm, grants, post, where) => {
+        const me = { child: false, args: [], cwd: "/", post: null };
+        const top = wacRun(wasm, me, grants, (next, answer) => wacPageServer(next, answer, post, where), (text) => console.error(text));
+        return top === null ? () => {} : top.receive;
       };
       """;
 }
@@ -1357,29 +1330,25 @@ export string brokerClient() {
 }
 
 /**
- * The page, with the program in a worker: the glue and the program's half in a script the browser
- * does not run, and the document's half starting a worker from that script's text. A blob rather than
- * a second file, so the page stays one file that also works from a `file://` URL — and a **classic**
- * worker, which is why the glue is `wac bindgen --script`: a module worker made from a blob is refused
- * on a `file://` page, and a `data:` one would lose the page's origin and the storage that goes with it.
+ * The page, with the program in a worker: the program's half in a script the browser does not run, the module as
+ * base64 in an element it does not run either, and the document's half starting a worker from that script's text
+ * and handing it the module. A blob rather than a second file, so the page stays one file that also works from a
+ * `file://` URL — and a **classic** worker: a module worker made from a blob is refused on a `file://` page, and a
+ * `data:` one would lose the page's origin and the storage that goes with it.
  */
-export string workerIndexFor(string title, string module, bool spawn) {
-  return head(title)
-       + "<script type=\"text/plain\" id=\"wac-program\">\n" + module + "\n" + systemSide()
-       + programSide()
-       + (spawn ? childSide() : "") + moduleSide()
-       // The first message says who this worker is: the page's program, a copy started by one, or a module one
-       // was handed.
+export string workerIndexFor(string title, string wasm, i32 grants) {
+  return head(title) + moduleElement(wasm)
+       + "<script type=\"text/plain\" id=\"wac-program\">\n" + systemSide() + programSide() + moduleSide()
+       // The first message says who this worker is: the page's program, or a module a program started.
        + brokerClient()
        + "let receive = null;\n"
        + "onmessage = (e) => {\n"
        + "  if (wacFromPage(e.data)) return;\n"
        + "  if (receive !== null) return receive(e.data);\n"
-       + "  if (e.data[0] === \"init\") { receive = () => {}; return wacChild(e.data[1], e.data[2]); }\n"
        + "  if (e.data[0] === \"module\") { receive = () => {}; return wacModule(e.data[1], e.data[2]); }\n"
-       + "  receive = wacProgram((m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
+       + "  receive = wacPage(e.data[2], \{grants}, (m, transfer) => postMessage(m, transfer ?? []), e.data[1]);\n"
        + "};\n</script>\n"
-       + documentScript(documentSide() + brokerSide()
+       + documentScript(documentSide() + brokerSide() + moduleBytes()
        + """
          const source = document.getElementById("wac-program").textContent;
          const script = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
@@ -1388,21 +1357,37 @@ export string workerIndexFor(string title, string module, bool spawn) {
          const apply = wacDocument(document.getElementById("app"), (m, transfer) => worker.postMessage(m, transfer ?? []));
          worker.onmessage = (e) => { if (!broker(worker, e.data)) apply(e.data); };
          worker.onerror = (e) => console.error(e.message);
-         worker.postMessage(["page", location.hash]);
+         const wasm = wacModuleBytes();
+         worker.postMessage(["page", location.hash, wasm], [wasm.buffer]);
          """)
        + "</body>\n</html>\n";
 }
 
 /** The page, with the program on the page's own thread: the two halves joined directly. */
-export string inPageIndexFor(string title, string module) {
-  return head(title)
-       + documentScript(module + "\n" + systemSide() + moduleSide() + programSide() + documentSide()
-       + """
-         let receive = null;
-         const apply = wacDocument(document.getElementById("app"), (m) => receive(m));
-         receive = wacProgram((m) => apply(m), location.hash);
-         """)
+export string inPageIndexFor(string title, string wasm, i32 grants) {
+  return head(title) + moduleElement(wasm)
+       + documentScript(systemSide() + moduleSide() + programSide() + documentSide() + moduleBytes()
+       + "let receive = null;\n"
+       + "const apply = wacDocument(document.getElementById(\"app\"), (m) => receive(m));\n"
+       + "receive = wacPage(wacModuleBytes(), \{grants}, (m) => apply(m), location.hash);\n")
        + "</body>\n</html>\n";
+}
+
+/** The page's module, as base64 in an element the browser does not run. */
+string moduleElement(string wasm) {
+  return "<script type=\"text/plain\" id=\"wac-module\">" + wasm + "</script>\n";
+}
+
+/** `wacModuleBytes()`: the module that element holds, as bytes. */
+string moduleBytes() {
+  return """
+      const wacModuleBytes = () => {
+        const text = atob(document.getElementById("wac-module").textContent.trim());
+        const bytes = new Uint8Array(text.length);
+        for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+        return bytes;
+      };
+      """;
 }
 
 /**
@@ -1464,32 +1449,34 @@ export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs proc
     return 2;
   }
   fs.mkdir(a.out, true).wait();
-  string wrapper = a.out + "/page.wac";
-  // A path names the file from here, and the wrapper sits in `out`; anything else is a mapped name.
+  string source = a.out + "/page.wac";
+  // A path names the file from here, and the module sits in `out`; anything else is a mapped name.
   bool pagePath = a.pageSpec.len() > 0 && (a.pageSpec.slice(0, 1) == "." || a.pageSpec.slice(0, 1) == "/");
   string pageSpec = pagePath ? relativeTo(a.out, a.pageSpec) : a.pageSpec;
   string entrySpec = relativeTo(a.out, a.entry);
-  fs.writeFile(wrapper, wrapperFor(entrySpec, pageSpec, a.grants, a.spawn, a.dev).toBytes()).wait();
-  string js = a.out + "/page.js";
-  auto madeRan = flatten(procs.exec(a.wac, ["bindgen", wrapper, js, "--script"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
-  Exec? made = madeRan.ok();
-  if (!made!.ok()) {
-    err.write(made!.stderr);
-    err.write(made!.stdout);
-    if ("\{madeRan.isErr() ? "\{madeRan.err()!}" : ""}" != "") { flatten(err.write("build.wac: \{a.wac}: \{madeRan.isErr() ? "\{madeRan.err()!}" : ""}\n".toBytes()).wait()).isOk(); }
+  fs.writeFile(source, moduleFor(entrySpec, pageSpec, a.spawn, a.dev).toBytes()).wait();
+  auto builtRan = flatten(procs.exec(a.wac, ["build", source, "-o", a.out + "/page"], u8[](), ChildEnv.inherited(), Launch.plain()).wait());
+  Exec? built = builtRan.ok();
+  if (built is null || !built!.ok()) {
+    if (built is not null) {
+      err.write(built!.stderr);
+      err.write(built!.stdout);
+    }
+    if (builtRan.isErr()) { flatten(err.write("build.wac: \{a.wac}: \{builtRan.err()!}\n".toBytes()).wait()).isOk(); }
     return 1;
   }
-  auto moduleRead = flatten(fs.readFile(js).wait());
-  u8[]? module = moduleRead.ok();
-  if ((module is null)) {
-    err.write("build.wac: \{js}: \{moduleRead.isErr() ? "\{moduleRead.err()!}" : ""}\n".toBytes());
+  string wasmPath = a.out + "/page.wasm";
+  auto wasmRead = flatten(fs.readFile(wasmPath).wait());
+  u8[]? wasm = wasmRead.ok();
+  if ((wasm is null)) {
+    err.write("build.wac: \{wasmPath}: \{wasmRead.isErr() ? "\{wasmRead.err()!}" : ""}\n".toBytes());
     return 1;
   }
   string index = a.out + "/index.html";
-  string page = a.inPage ? inPageIndexFor(a.title, string.fromBytes(module!))
-                          : workerIndexFor(a.title, string.fromBytes(module!), a.spawn != "");
+  string encoded = base64(wasm!);
+  string page = a.inPage ? inPageIndexFor(a.title, encoded, a.grants) : workerIndexFor(a.title, encoded, a.grants);
   fs.writeFile(index, page.toBytes()).wait();
-  out.line("\{index}: \{module!.len()} bytes of module");
+  out.line("\{index}: \{wasm!.len()} bytes of module");
   return 0;
 }
 

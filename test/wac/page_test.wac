@@ -386,7 +386,7 @@ export string test_a_program_finds_its_page_by_name_on_its_own_host() {
   TestDoc doc = TestDoc.create();
   Runner r = Runner.create();
   schedule r.take;
-  Ticket<Result<Page, string>> found = Page.open(doc.world!.sys);
+  Ticket<Result<Page, string>> found = Page.open(doc.sys!);
   r.drain();
   t.isTrue(found.settled(), "the host answered the lookup");
   bool ok = false;

@@ -49,5 +49,5 @@ The whole of `Page` is in the README of the `web` package, `https://git.voltrevo
 | `src/app.wac` | the application |
 | `test/app_test.wac` | the application driven without a browser |
 
-The build writes three files into `dist/`: `page.wac`, the wrapper the browser calls into; `page.js`,
-the module with the program inside it; and `index.html`, which is both in one file.
+The build writes three files into `dist/`: `page.wac`, the program as a module that opens the page its host
+provides; `page.wasm`, that module built; and `index.html`, which is the module and the browser's host in one file.

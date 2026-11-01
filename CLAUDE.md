@@ -48,9 +48,10 @@ of the desktop (step 2 of the handover in `https://git.voltrevo.com/notes.git`,
 `2026-10-29-wac-desktop-handover.md`).
 
 - **Done:** the capability (`src/line.wac`), `Page` and `Element` over it (`Page.open(sys)`), `TestDoc` as a
-  host answering it, and the browser host answering it (`programSide` in `tools/build.wac`). A built page's
-  program finds the page by name like any other program would.
-- **Next:** a page's program as a plain module — built by `wac build`, driven from its `wac.manifest` like any
-  module the page starts (`moduleSide`), with `wacPageServer` answering its `wac.page` — so the desktop can
-  start one from a file and answer its requests into a window (`Procs.spawnProviding` with a `Provider` for
-  `wac.page`). Then the wrapper and `PageHost` go.
+  host answering it, and the browser host answering it (`wacPageServer` in `tools/build.wac`). A page's program
+  is a plain module (`moduleFor`): built by `wac build`, driven from its manifest like any module (`wacRun`),
+  rendering on `Page.changed`. The bindgen wrapper, `PageHost`, `Spawned` and `system.wac` are gone.
+- **Next:** the desktop starting a page's `page.wasm` and answering its `wac.page` into a window —
+  `Procs.spawnProviding` with a `Provider` for `wac.page` whose answers draw into an `Element` the desktop holds.
+  That is wac-desktop's step 3 (`wac.desktop` and windows); a `Provider` written in wac answers with what
+  `line.wac` exports.

@@ -73,7 +73,7 @@ Deno.test("the template builds and tests outside the repository", async () => {
     const built = await sh(`'${WAC}' run --allow-read --allow-write --allow-run build.wac src/app.wac dist --wac '${WAC}'`, project, env);
     assert(built.ok, `the page builds — ${built.said}`);
     const html = await Deno.readTextFile(`${project}/dist/index.html`);
-    assert(html.includes("host.start()"), "the page starts the program");
+    assert(html.includes('id="wac-module"') && html.includes("wacPage("), "the page carries its module, and runs it");
     // **The one script the page runs as written is the one its policy allows.** The build states the
     // loader's hash rather than computing it — it has no SHA-256 to import (`documentScript` in
     // `tools/build.wac`) — so a loader edited without its hash is a page that runs nothing, and only a

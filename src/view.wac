@@ -175,7 +175,10 @@ export struct Ui {
   void changed(this) {
     if (!this.live || this.dirty) { return; }
     this.dirty = true;
-    if (this.view is not null) { this.view!.dirty.push(this); }
+    if (this.view is not null) {
+      this.view!.dirty.push(this);
+      this.view!.woke();
+    }
   }
 
   void unmount(this) {
@@ -264,13 +267,20 @@ export struct View {
   Vec<Ui> ran;
   /** The names of the components rendered, in order — what a test reads. */
   Vec<string> rendered;
+  /**
+   * **Told each time a component has something to render**, so whoever runs the turns knows one is due: a page
+   * renders once the program has run on (`Page.changed`). Nothing, for a view whose turns a test runs by hand.
+   */
+  fn<void()>? onDirty;
 
   View create(Element host, fn<void(i32, fn<void()>)> later) {
     Vec<Ui> dirty = Vec.create();
     Vec<Ui> ran = Vec.create();
     Vec<string> rendered = Vec.create();
-    return View(host, later, null, dirty, ran, rendered);
+    return View(host, later, null, dirty, ran, rendered, null);
   }
+
+  void woke(this) { if (this.onDirty is not null) { this.onDirty!(); } }
 
   /** Render `draw` into the host, and keep it rendered: a root component of no attributes. */
   void mount(this, fn<Node(Ui)> draw) {
