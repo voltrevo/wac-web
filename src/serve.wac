@@ -10,8 +10,8 @@
 // size — and one that fails is dropped and noted in `refused`, the way a browser drops what its policy refuses.
 //
 // **What comes back is the child's to ask for**, as `line.wac` has it: its next event is answered from what its
-// elements heard, a frame by this page's next frame, a value by the element's. Its location never changes — a
-// window has no address bar — and no file reaches it until the desktop hands one over, which it does not yet.
+// elements heard, a frame by this page's next frame, a value by the element's, a file by what the desktop hands it
+// (`hand`). Its location never changes — a window has no address bar.
 
 import { Answer, FAULT_UNSUPPORTED, Provider } from "std";
 import { Map, Queue, Ticket, Vec, hashI32, i32Eq } from "core";
@@ -20,7 +20,7 @@ import { Page } from "./page.wac";
 import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE,
          PAGE_FOCUS, PAGE_FRAME, PAGE_LISTEN, PAGE_LOCATION, PAGE_LOG, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_MOVE,
          PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_TEXT, PAGE_TITLE,
-         PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
+         PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt, when } from "./line.wac";
 
 /** How many refusals are kept: the latest, which is what someone looking at a misbehaving window wants. */
 static i32 KEPT_REFUSALS = 32;
@@ -35,6 +35,9 @@ export struct PageServer {
   /** Events heard that the child has not asked for yet, and its requests for the next one. */
   Queue<Happened> heard;
   Queue<Ticket<Answer>> asking;
+  /** Files handed over that the child has not asked for yet, and its requests for the next one. */
+  Queue<Answer> handed;
+  Queue<Ticket<Answer>> wanting;
   i32 seq;
   /** Told each title the child gives its page — a window's caption. */
   fn<void(string)> onTitle;
@@ -49,7 +52,10 @@ export struct PageServer {
     byId.push(root);
     Queue<Happened> heard;
     Queue<Ticket<Answer>> asking;
-    return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, 0, onTitle, onLog, Vec.create());
+    Queue<Answer> handed;
+    Queue<Ticket<Answer>> wanting;
+    return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
+                      Vec.create());
   }
 
   /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
@@ -74,7 +80,7 @@ export struct PageServer {
       if (e is null) { return done(""); }
       Ticket<Answer> t;
       Ticket<string> v = e!.value();
-      v.whenSettled(() => { t.resolve(Answer(0, v.value(), u8[](), 0 as i64, 0 as i64, 0)); });
+      when(v, () => { t.resolve(Answer(0, v.value(), u8[](), 0 as i64, 0 as i64, 0)); });
       return t;
     }
     if (k == PAGE_EVENT) {
@@ -90,7 +96,7 @@ export struct PageServer {
     if (k == PAGE_FRAME) {
       Ticket<Answer> t;
       Ticket<f64> f = this.page.nextFrame();
-      f.whenSettled(() => { t.resolve(Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); });
+      when(f, () => { t.resolve(Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); });
       return t;
     }
     if (k == PAGE_LOCATION) {
@@ -100,8 +106,14 @@ export struct PageServer {
       return never;
     }
     if (k == PAGE_FILE) {
-      Ticket<Answer> never;
-      return never;
+      Ticket<Answer> t;
+      Answer? f = this.handed.pop();
+      if (f is not null) {
+        t.resolve(f!);
+        return t;
+      }
+      this.wanting.push(t);
+      return t;
     }
     if (k >= 0 && k < PAGE_COUNT) {
       this.change(k, a, b, text, bytes);
@@ -267,6 +279,20 @@ export struct PageServer {
       return;
     }
     this.refuse("wac.page has no change \{k}");
+  }
+
+  /**
+   * A file the person handed the child — dropped on its window, say — or, with `ok` false, one that could not be
+   * read, saying why in `bytes`: its `nextFile`, now if it is asking, or when it does.
+   */
+  void hand(this, bool ok, string name, u8[] bytes) {
+    Answer a = Answer(0, name, bytes, 0 as i64, 0 as i64, ok ? 0 : 1);
+    Ticket<Answer>? t = this.wanting.pop();
+    if (t is not null) {
+      t!.resolve(a);
+      return;
+    }
+    this.handed.push(a);
   }
 
   /** An event heard by the child's listener `listener`, for the child — told now if it is asking, or kept. */

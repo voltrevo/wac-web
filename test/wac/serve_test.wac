@@ -5,13 +5,14 @@
 // child holds its changes and sends them together, as a child of a real host does.
 
 import { Check } from "./check.wac";
-import { Ticket } from "core";
+import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { Element, ElementEvent, Node, PAGE_COUNT, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
-         PageServer, TestDoc, Ui, html.b, html.button, html.p, pair } from "../../src/page.wac";
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_PICK, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+         PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
-/** Where the child's host numbers `wac.page`. */
+/** Where the child's host numbers `wac.page`, and `wac.desktop`. */
 static i32 BASE = 8192;
+static i32 DESK = 9000;
 
 /** The desktop's document and page, the window the child draws in, the server, and the child's page. */
 struct Rig {
@@ -21,6 +22,7 @@ struct Rig {
   PageServer server;
   Page child;
   string title;
+  ChildHost? host;
 }
 
 /** A child whose requests are answered by `server`: inside the request when the answer is ready, later otherwise. */
@@ -29,8 +31,19 @@ struct ChildHost {
   Host? host;
   Page? page;
   i32 asking;
+  /** What the desktop's picker answers, in turn: a path, or `""` for nothing chosen. */
+  Vec<string> picks;
 
   void request(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
+    if (op == OP_CAPABILITY() && text == DESKTOP_CAPABILITY()) {
+      this.give(id, Answer(0, "1.0.0", u8[](), DESK as i64, DESKTOP_COUNT as i64, 0));
+      return;
+    }
+    if (op == DESK + DESKTOP_PICK) {
+      string chosen = this.picks.len() > 0 ? this.picks.remove(0) : "";
+      this.give(id, Answer(0, chosen, u8[](), 0 as i64, 0 as i64, chosen == "" ? 1 : 0));
+      return;
+    }
     if (op == OP_CAPABILITY()) {
       this.give(id, Answer(0, PAGE_VERSION(), u8[](), BASE as i64, PAGE_COUNT as i64, 0));
       return;
@@ -42,7 +55,7 @@ struct ChildHost {
     if (op < BASE || op >= BASE + PAGE_COUNT) { return; }
     Ticket<Answer> t = this.server.answer(op - BASE, a, b, text, bytes);
     ChildHost me = this;
-    t.whenSettled(() => { me.give(id, t.value()); });
+    when(t, () => { me.give(id, t.value()); });
   }
 
   /** An answer: settled where it stands inside a request, and run on — the child's turn — from outside one. */
@@ -64,10 +77,10 @@ Rig rig() {
   TestDoc doc = TestDoc.create();
   Page desk = doc.page();
   Element window = desk.root().append("div");
-  Rig r = Rig(doc, desk, window, PageServer.into(desk, window, (string t) => { }, (string l) => { }), desk, "");
+  Rig r = Rig(doc, desk, window, PageServer.into(desk, window, (string t) => { }, (string l) => { }), desk, "", null);
   Rig me = r;
   r.server.onTitle = (string t) => { me.title = t; };
-  ChildHost c = ChildHost(r.server, null, null, 0);
+  ChildHost c = ChildHost(r.server, null, null, 0, Vec.create());
   Host h = Host.of(
     (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
       c.asking++;
@@ -81,6 +94,7 @@ Rig rig() {
   Page child = Page.over(PageLine.of(h, BASE, 0), Sys.__wacOn(h));
   c.page = child;
   r.child = child;
+  r.host = c;
   return r;
 }
 
@@ -123,5 +137,50 @@ export string test_what_a_child_may_not_do_is_refused_and_the_desktop_goes_on() 
   t.isTrue(r.server.refused.get(3).indexOf("stays") >= 0, "the window itself: " + r.server.refused.get(3));
   t.isTrue(r.doc.findTag("button") >= 0, "the button was made");
   t.eqI32(r.doc.findTag("script"), 0 - 1, "the script was not");
+  return t.report();
+}
+
+async string takesTwo(Page page) {
+  Picked a = await page.nextFile();
+  Picked b = await page.nextFile();
+  return a.name + "=" + string.fromBytes(a.bytes) + ";" + b.name + (b.ok ? "" : " failed: " + b.error);
+}
+
+export string test_a_file_handed_to_the_window_is_the_childs_next_file() {
+  Check t = Check.create();
+  Rig r = rig();
+  // One handed before the child asks is kept for it; one after answers the request it is waiting on.
+  r.server.hand(true, "a.txt", "hi".toBytes());
+  schedule r.child.take;
+  Ticket<string> got = takesTwo(r.child);
+  r.child.drain();
+  t.isFalse(got.settled(), "the first arrived, the second has not");
+  r.server.hand(false, "b.bin", "NotReadableError".toBytes());
+  t.isTrue(got.settled(), "the second answered what was waiting");
+  t.eqStr(got.value(), "a.txt=hi;b.bin failed: NotReadableError", "both, in order, the second saying why it failed");
+  return t.report();
+}
+
+async string picks(Sys sys) {
+  match (await Desktop.of(sys)) {
+    Ok(d): {
+      Result<string, string> first = await d.pick("a note to read");
+      Result<string, string> second = await d.pick("another");
+      return (first.isOk() ? first.ok()! : first.err()!) + ";" + (second.isOk() ? second.ok()! : second.err()!);
+    }
+    Err(why): { return "no desktop: " + why; }
+  }
+}
+
+export string test_a_program_finds_the_desktop_that_started_it_and_picks_with_it() {
+  Check t = Check.create();
+  Rig r = rig();
+  r.host!.picks.push("Desktop/notes.txt");
+  Runner run = Runner.create();
+  schedule run.take;
+  Ticket<string> got = picks(r.child.sys);
+  run.drain();
+  t.isTrue(got.settled(), "both picks were answered");
+  t.eqStr(got.value(), "Desktop/notes.txt;nothing was chosen", "a path, then nothing chosen");
   return t.report();
 }

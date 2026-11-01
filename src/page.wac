@@ -34,7 +34,7 @@ import { Continuation, Queue, Result, Ticket, TicketBase, Vec } from "core";
 import { Answer, FAULT_NONE, OP_CAPABILITY, OP_MONOTONIC_NANOS, OP_SLEEP_MILLIS, Sys, ask } from "std";
 import { Node, htmlOf } from "./html.wac";
 import { Element, Elements } from "./element.wac";
-import { PAGE_CAPABILITY, PageLine } from "./line.wac";
+import { PAGE_CAPABILITY, PageLine, when } from "./line.wac";
 import { Ui, View } from "./view.wac";
 
 // The tree, its tags, the handles and the view are this package's too, so a page imports everything from
@@ -44,11 +44,14 @@ export * as html from "./tags.wac";
 export { Element, ElementEvent, Listen } from "./element.wac";
 // `wac.page` itself, for whoever answers it — a desktop drawing a program into a window, or a test.
 export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, batchOf, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
-         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_COUNT, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt } from "./line.wac";
+         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_COUNT, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt, when } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 // `wac.page` answered into an element this program holds — a desktop drawing a program into a window.
 export { PageServer } from "./serve.wac";
+// `wac.desktop`, for a program a desktop started: `Desktop.of(sys)`.
+export { DESKTOP_CAPABILITY, DESKTOP_COPY, DESKTOP_COUNT, DESKTOP_NOTE, DESKTOP_OPEN, DESKTOP_PASTE, DESKTOP_PICK,
+         DESKTOP_VERSION, Desktop } from "./desktop.wac";
 
 
 /** `ElementEvent.mods`: which modifier keys were held. */
@@ -132,7 +135,7 @@ export struct Page {
   void follow(this) {
     Page page = this;
     Ticket<Answer> t = this.line.location(this.at);
-    t.whenSettled(() => {
+    when(t, () => {
       string hash = t.value().text;
       page.at = hash.len() > 0 && hash[0] == "#" ? hash.slice(1, hash.len()) : hash;
       for (i32 i = 0; i < page.watchers.len(); i++) {
@@ -158,7 +161,7 @@ export struct Page {
   /** The same, into one element the program holds — a widget's own corner of the page. */
   View mountIn(this, Element host, fn<Node(Ui)> draw) {
     Page page = this;
-    View v = View.create(host, (i32 ms, fn<void()> f) => { page.sleep(ms).whenSettled(f); });
+    View v = View.create(host, (i32 ms, fn<void()> f) => { when(page.sleep(ms), f); });
     v.onDirty = () => { page.wake(); };
     this.views.push(v);
     v.mount(draw);
@@ -237,7 +240,7 @@ export struct Page {
   Ticket<Picked> nextFile(this) {
     Ticket<Picked> t;
     Ticket<Answer> a = this.line.file();
-    a.whenSettled(() => {
+    when(a, () => {
       Answer x = a.value();
       bool ok = x.flags == 0;
       t.resolve(Picked(ok, x.text, ok ? x.bytes : u8[](), ok ? "" : string.fromBytes(x.bytes)));
@@ -256,7 +259,7 @@ export struct Page {
   Ticket<f64> nowWhen(this, Ticket<Answer> a) {
     Page page = this;
     Ticket<f64> t;
-    a.whenSettled(() => { t.resolve(page.now()); });
+    when(a, () => { t.resolve(page.now()); });
     return t;
   }
 

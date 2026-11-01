@@ -436,3 +436,16 @@ export string test_a_batched_page_sends_what_it_holds_before_it_asks() {
   t.eqI32(done.value(), 3, "with the value");
   return t.report();
 }
+
+export string test_a_location_the_host_answers_at_once_is_where_the_page_starts() {
+  Check t = Check.create();
+  // The browser's host answers the page's first request for its location inside that request, as this one does
+  // when it is already somewhere. Waited for with `whenSettled` alone, an answer that early was never heard.
+  TestDoc doc = TestDoc.create();
+  doc.go("#/spec/strings");
+  Page page = doc.page();
+  t.eqStr(page.location(), "/spec/strings", "the page starts where the host is");
+  doc.go("#/tour");
+  t.eqStr(page.location(), "/tour", "and follows it from there");
+  return t.report();
+}

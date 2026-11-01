@@ -23,7 +23,7 @@
 
 import { Queue, Ticket, Vec } from "core";
 import { Answer } from "std";
-import { Happened, PageLine, happenedOf } from "./line.wac";
+import { Happened, PageLine, happenedOf, when } from "./line.wac";
 
 /** What the document does with an event of a kind, decided before any event happens. */
 export struct Listen {
@@ -98,7 +98,7 @@ export struct Elements {
   void follow(this) {
     Elements es = this;
     Ticket<Answer> t = this.line.event();
-    t.whenSettled(() => {
+    when(t, () => {
       Happened h = happenedOf(t.value());
       es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd);
       es.follow();
@@ -317,7 +317,7 @@ export struct Element {
     this.alive("value");
     Ticket<string> t;
     Ticket<Answer> a = this.es.line.value(this.id);
-    a.whenSettled(() => { t.resolve(a.value().text); });
+    when(a, () => { t.resolve(a.value().text); });
     return t;
   }
 

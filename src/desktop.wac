@@ -1,0 +1,77 @@
+// `wac.desktop`: what a desktop does for a program it started, asked by name.
+//
+// **A program does not know it is on a desktop until it asks** (the desktop handover's design points 3 and 4).
+// `Desktop.of(sys)` looks the capability up on the program's own host: a desktop that started it answers, and
+// anything else — a standalone page, a command line — says it has none, which is a program's cue to do without.
+// Holding a `Sys` is enough to ask, as it is to make a `Files`: no new authority.
+//
+// **The picker is the grant.** `pick` shows the person the desktop's files; what they choose is answered as a path
+// the program's `Files` can now read — and nothing else it could not before. `open` shows a path in the desktop's
+// app for it; `note` says something in the desktop's own voice; `copy` and `paste` are the desktop's clipboard,
+// which is text.
+//
+// Each request's fields, as `line.wac` gives `wac.page`'s. The desktop answers every request, `note` and `copy`
+// included, since only what a program asks reaches a parent: a `host.tell` goes to the program's own host.
+
+import { Answer, FAULT_NONE, OP_CAPABILITY, Sys, ask } from "std";
+import { Result, Ticket } from "core";
+
+export string DESKTOP_CAPABILITY() { return "wac.desktop"; }
+export string DESKTOP_VERSION() { return "1.0.0"; }
+
+/** `text` what the person is choosing for → `text` the path chosen; `flags` 1 when they chose nothing. */
+export static i32 DESKTOP_PICK = 0;
+/** `text` a path the program may read → shown in the desktop's app for it; a fault when it may not. */
+export static i32 DESKTOP_OPEN = 1;
+/** `text`: said in the desktop's note. */
+export static i32 DESKTOP_NOTE = 2;
+/** `text`: put on the desktop's clipboard. */
+export static i32 DESKTOP_COPY = 3;
+/** → `text`: what is on the desktop's clipboard. */
+export static i32 DESKTOP_PASTE = 4;
+/** How many request numbers the capability takes. */
+export static i32 DESKTOP_COUNT = 5;
+
+/** The desktop that started this program: its host, and where the capability's numbers start on it. */
+export struct Desktop {
+  Sys sys;
+  i32 base;
+
+  /** The desktop, if the program's host is one; `Err` says why not — run anywhere else, there is none. */
+  async Result<Desktop, string> of(Sys sys) {
+    Answer found = await ask(sys.host, OP_CAPABILITY(), 0 as i64, 0 as i64, DESKTOP_CAPABILITY(), "^1".toBytes());
+    if (found.fault != FAULT_NONE()) { return Result.Err(found.text); }
+    return Result.Ok(Desktop(sys, found.n as~ i32));
+  }
+
+  Ticket<Answer> ask(this, i32 op, string text) {
+    return ask(this.sys.host, this.base + op, 0 as i64, 0 as i64, text, u8[]());
+  }
+
+  /**
+   * Ask the person to choose a file, saying what for. The path they chose — which this program's files can read
+   * from now on — or `Err` when they chose nothing.
+   */
+  async Result<string, string> pick(this, string what) {
+    Answer a = await this.ask(DESKTOP_PICK, what);
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    if (a.flags == 1) { return Result.Err("nothing was chosen"); }
+    return Result.Ok(a.text);
+  }
+
+  /** Show `path` in the desktop's app for it. `Err` when this program may not read it. */
+  async Result<void, string> open(this, string path) {
+    Answer a = await this.ask(DESKTOP_OPEN, path);
+    if (a.fault != FAULT_NONE()) { return Result.Err(a.text); }
+    return Result.Ok();
+  }
+
+  /** Say `text` in the desktop's note. */
+  void note(this, string text) { this.ask(DESKTOP_NOTE, text); }
+
+  /** Put `text` on the desktop's clipboard. */
+  void copy(this, string text) { this.ask(DESKTOP_COPY, text); }
+
+  /** What is on the desktop's clipboard. */
+  async string paste(this) { return (await this.ask(DESKTOP_PASTE, "")).text; }
+}
