@@ -152,7 +152,8 @@ a read is a GET, and a listing or a size comes from the site's `index.json`, whi
 
     wac run --allow-read --allow-write tools/index.wac <site-dir>
 
-after everything else is in place. A page opened from a file has no site, and `Site.of` says so. The page's policy
+after everything else is in place — or, from the site's own build, with `indexSite(files, out, siteDir)`, which
+`webbuild` exports beside `buildPage`. A page opened from a file has no site, and `Site.of` says so. The page's policy
 allows its own origin to be read for this (`connect-src 'self'`), and nothing else.
 
 ## Testing a page without a browser

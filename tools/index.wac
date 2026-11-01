@@ -3,6 +3,8 @@
 //
 //     wac run --allow-read --allow-write tools/index.wac dist
 //
+// or, from a site's own build, `indexSite` — which `webbuild` exports beside `buildPage`.
+//
 // **The site's build writes it**, as the owner chose, after everything else is in place: so it lists what is served,
 // and nobody keeps it by hand. `index.json` itself is not listed. The shape is `{"files":[["a/b.wasm",123],...],
 // "dirs":["a",...]}`, no spaces, which is all `src/site.wac` reads — so a name with a `"` or a `\` in it is refused
@@ -36,32 +38,35 @@ string walk(Files fs, string root, string rel, Vec<string> files, Vec<i64> sizes
   return "";
 }
 
-export i32 main(Sys sys) {
-  string[] args = sys.args();
-  if (args.len() != 1) {
-    sys.stderr().line("usage: index.wac <site-dir>");
-    return 2;
-  }
-  string root = args[0];
+/** Write `root/index.json`, saying what it wrote on `out`; `""` when it went well, or what went wrong. */
+export string indexSite(Files fs, Output out, string root) {
   Vec<string> files = Vec.create();
   Vec<i64> sizes = Vec.create();
   Vec<string> dirs = Vec.create();
-  string why = walk(sys.files(), root, "", files, sizes, dirs);
-  if (why != "") {
-    sys.stderr().line("index.wac: " + why);
-    return 1;
-  }
+  string why = walk(fs, root, "", files, sizes, dirs);
+  if (why != "") { return why; }
   Buf b = Buf.create();
   b.pushStr("{\"files\":[");
   for (i32 i = 0; i < files.len(); i++) { b.pushStr((i > 0 ? "," : "") + "[\"" + files.get(i) + "\",\{sizes.get(i)}]"); }
   b.pushStr("],\"dirs\":[");
   for (i32 i = 0; i < dirs.len(); i++) { b.pushStr((i > 0 ? "," : "") + "\"" + dirs.get(i) + "\""); }
   b.pushStr("]}\n");
-  auto wrote = flatten(sys.files().writeFile(root + "/index.json", b.take()).wait());
-  if (wrote.isErr()) {
-    sys.stderr().line("index.wac: \{root}/index.json: \{wrote.err()!}");
+  auto wrote = flatten(fs.writeFile(root + "/index.json", b.take()).wait());
+  if (wrote.isErr()) { return "\{root}/index.json: \{wrote.err()!}"; }
+  out.line("\{root}/index.json: \{files.len()} files, \{dirs.len()} folders");
+  return "";
+}
+
+export i32 main(Sys sys) {
+  string[] args = sys.args();
+  if (args.len() != 1) {
+    sys.stderr().line("usage: index.wac <site-dir>");
+    return 2;
+  }
+  string why = indexSite(sys.files(), sys.stdout(), args[0]);
+  if (why != "") {
+    sys.stderr().line("index.wac: " + why);
     return 1;
   }
-  sys.stdout().line("\{root}/index.json: \{files.len()} files, \{dirs.len()} folders");
   return 0;
 }

@@ -24,6 +24,9 @@
 import { Exec, Sys, ChildEnv, Files, Launch, Output, Procs } from "std";
 import { Vec, flatten } from "core";
 
+// A site's `index.json`, which its build writes last (`index.wac`): exported here, as the package's one entry.
+export { indexSite } from "./index.wac";
+
 /** What a build was asked for. */
 struct Asked {
   string entry;
