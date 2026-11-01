@@ -170,12 +170,17 @@ async Result<string[], LookFault> siteList(Index ix, string path) {
   return Result.Ok(names.toArray());
 }
 
+// Every change refused, each taking what its `FileOps` slot is handed so it is passed by name: a lambda apiece would
+// cost a program that uses this one of the emitter's limited lambdas each, for nothing.
 string readOnlyWords(string p) { return p + ": Read-only file system"; }
-async Result<void, WriteFault> siteNoWrite(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, WriteFault> siteNoWrite(string p, u8[] b) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 async Result<Output, WriteFault> siteNoOutput(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
-async Result<void, MkdirFault> siteNoMkdir(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
-async Result<void, MoveFault> siteNoMove(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
-async Result<void, ModeFault> siteNoMode(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, MkdirFault> siteNoMkdir(string p, bool parents) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, MoveFault> siteNoRemove(string p, bool recursive) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, MoveFault> siteNoRename(string from, string to) { return Result.Err(ReadOnly(readOnlyWords(from))); }
+async Result<void, ModeFault> siteNoChmod(string p, i32 mode) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, ModeFault> siteNoFlag(string p, bool on) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+async Result<void, ModeFault> siteNoChown(string p, string owner) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 
 /**
  * A file opened to stream, as a command does — fetched whole first, since a site is read a file at a time, then
@@ -208,17 +213,17 @@ export Files siteFiles(Site site) {
   Index ix = Index(site, null);
   return Files.of(FileOps(
     (string p) => siteRead(ix, p),
-    (string p, u8[] b) => siteNoWrite(p),
+    siteNoWrite,
     (string p) => siteStream(ix, p),
-    (string p) => siteNoOutput(p),
-    (string p) => siteNoOutput(p),
+    siteNoOutput,
+    siteNoOutput,
     (string p) => siteStat(ix, p),
     (string p) => siteStat(ix, p),
     (string p) => siteList(ix, p),
-    (string p, bool parents) => siteNoMkdir(p),
-    (string p, bool recursive) => siteNoMove(p),
-    (string from, string to) => siteNoMove(from),
-    (string p, i32 mode) => siteNoMode(p),
-    (string p, bool on) => siteNoMode(p),
-    (string p, string owner) => siteNoMode(p)), "");
+    siteNoMkdir,
+    siteNoRemove,
+    siteNoRename,
+    siteNoChmod,
+    siteNoFlag,
+    siteNoChown), "");
 }
