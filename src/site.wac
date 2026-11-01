@@ -7,11 +7,12 @@
 //
 // **As files** (`siteFiles`): reading a file is a GET of it, and what a directory holds, and how large a file is,
 // come from the site's `index.json`, which its build writes (`tools/index.wac`) — every path under the site's root,
-// each a file with its size or a directory — fetched once. Nothing can be changed.
+// each a file with its size or a directory — fetched once. A file opened to stream is fetched whole, then streamed.
+// Nothing can be changed.
 
-import { Answer, FAULT_NONE, FileOps, Files, Input, IsDir, LookFault, MkdirFault, ModeFault, MoveFault, NotADir,
-         NotFound, OP_CAPABILITY, Output, ReadFault, ReadOnly, Stat, Sys, Unsupported, WriteFault, ask } from "std";
-import { Result, Ticket, Vec } from "core";
+import { Answer, FAULT_NONE, FileOps, Files, HostFault, Input, IsDir, LookFault, MkdirFault, ModeFault, MoveFault, NotADir,
+         NotFound, OP_CAPABILITY, Output, ReadFault, ReadOnly, Stat, Sys, WriteFault, ask } from "std";
+import { Read, Result, Ticket, Vec } from "core";
 
 export string SITE_CAPABILITY() { return "wac.site"; }
 export string SITE_VERSION() { return "1.0.0"; }
@@ -172,10 +173,35 @@ async Result<string[], LookFault> siteList(Index ix, string path) {
 string readOnlyWords(string p) { return p + ": Read-only file system"; }
 async Result<void, WriteFault> siteNoWrite(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 async Result<Output, WriteFault> siteNoOutput(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
-async Result<Input, ReadFault> siteNoStream(string p) { return Result.Err(Unsupported(p + ": read it whole; a site is read a file at a time")); }
 async Result<void, MkdirFault> siteNoMkdir(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 async Result<void, MoveFault> siteNoMove(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
 async Result<void, ModeFault> siteNoMode(string p) { return Result.Err(ReadOnly(readOnlyWords(p))); }
+
+/**
+ * A file opened to stream, as a command does — fetched whole first, since a site is read a file at a time, then
+ * handed over as one piece and the end.
+ */
+async Result<Input, ReadFault> siteStream(Index ix, string path) {
+  Result<u8[], ReadFault> got = await siteRead(ix, path);
+  if (got.isErr()) { return Result.Err(got.err()!); }
+  u8[] data = got.ok()!;
+  bool[] gone = bool[].filled(1, false);
+  return Result.Ok(Input(() => onePiece(data, gone), () => theRest(data, gone), closed));
+}
+
+async Result<Read, HostFault> onePiece(u8[] data, bool[] gone) {
+  if (gone[0] || data.len() == 0) { return Result.Ok(Read.End); }
+  gone[0] = true;
+  return Result.Ok(Read.Data(data));
+}
+
+async Result<u8[], HostFault> theRest(u8[] data, bool[] gone) {
+  bool was = gone[0];
+  gone[0] = true;
+  return Result.Ok(was ? u8[]() : data);
+}
+
+async Result<void, HostFault> closed() { return Result.Ok(); }
 
 /** The site as files: read-only, its listings and sizes from its `index.json`, each file a GET. */
 export Files siteFiles(Site site) {
@@ -183,7 +209,7 @@ export Files siteFiles(Site site) {
   return Files.of(FileOps(
     (string p) => siteRead(ix, p),
     (string p, u8[] b) => siteNoWrite(p),
-    (string p) => siteNoStream(p),
+    (string p) => siteStream(ix, p),
     (string p) => siteNoOutput(p),
     (string p) => siteNoOutput(p),
     (string p) => siteStat(ix, p),

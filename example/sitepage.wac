@@ -1,7 +1,9 @@
 // A page that reads the site it was served from, as files: what `test/site_live.test.ts` builds, serves and opens.
-// It lists the site's `data` folder and reads the note in it — or, opened from a file, says there is no site.
+// It lists the site's `data` folder and reads the note in it, whole and as a stream — or, opened from a file, says
+// there is no site.
 
 import { Sys } from "std";
+import { flatten } from "core";
 import { Node, Page, Site, Ui, html.p, siteFiles } from "../src/page.wac";
 
 async string read(Sys sys) {
@@ -12,11 +14,15 @@ async string read(Sys sys) {
       if (names.isErr()) { return "no listing: \{names.err()!}"; }
       auto note = await files.readFile("/data/note.txt");
       if (note.isErr()) { return "no note: \{note.err()!}"; }
+      auto opened = await files.openRead("data/other.txt");
+      if (opened.isErr()) { return "no stream: \{opened.err()!}"; }
+      auto streamed = await opened.ok()!.readAll();
+      if (streamed.isErr()) { return "no stream: \{streamed.err()!}"; }
       auto written = await files.writeFile("data/new.txt", "x".toBytes());
       string[] all = names.ok()!;
       string listed = "";
       for (i32 i = 0; i < all.len(); i++) { listed = listed + (i > 0 ? "," : "") + all[i]; }
-      return listed + "|" + string.fromBytes(note.ok()!) + "|" + (written.isOk() ? "written" : "read-only");
+      return listed + "|" + string.fromBytes(note.ok()!) + "|" + string.fromBytes(streamed.ok()!) + "|" + (written.isOk() ? "written" : "read-only");
     }
     Err(why): { return "no site: " + why; }
   }
