@@ -56,6 +56,10 @@ export struct PageServer {
   /** The child's sounds, and the voices it played, by its numbers. */
   Map<i32, Sound> sounds;
   Map<i32, Voice> voices;
+  /** How loud the child asked each of its voices to be, before `loudness` scales it. */
+  Map<i32, f64> asked;
+  /** **How loud this child is, all of it** (`louder`): what it asks for is scaled by this, 1 being as asked. */
+  f64 loudness;
 
   /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
   PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
@@ -66,7 +70,7 @@ export struct PageServer {
     Queue<Answer> handed;
     Queue<Ticket<Answer>> wanting;
     return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
-                      Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq));
+                      Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), 1.0);
   }
 
   /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
@@ -85,6 +89,7 @@ export struct PageServer {
     Voice[] playing = this.voices.values();
     for (i32 i = 0; i < playing.len(); i++) { playing[i].stop(); }
     this.voices = Map.create(hashI32, i32Eq);
+    this.asked = Map.create(hashI32, i32Eq);
     while (true) {
       Ticket<Answer>? t = this.asking.pop();
       if (t is null) { break; }
@@ -213,22 +218,43 @@ export struct PageServer {
         this.refuse("play: \{lowOf(a)} is not a sound of the child's");
         return;
       }
-      f64 volume = (highOf(b) as f64) / 1000.0;
+      f64 asked = (highOf(b) as f64) / 1000.0;
+      f64 volume = asked * this.loudness;
       // When and from where, as the child asked: its clock and this page's are the same one.
       Voice v = bytes.len() >= 16 ? sound!.playAt(volume, lowOf(b) != 0, getF64(bytes, 0), getF64(bytes, 8))
                                   : (lowOf(b) != 0 ? sound!.loop(volume) : sound!.play(volume));
       this.voices.set(highOf(a), v);
+      this.asked.set(highOf(a), asked);
       return;
     }
     if (k == PAGE_GAIN) {
       Voice? fading = this.voices.get(a as~ i32);
-      if (fading is not null) { fading!.fade((highOf(b) as f64) / 1000.0, lowOf(b)); }
+      if (fading is not null) {
+        f64 asked = (highOf(b) as f64) / 1000.0;
+        this.asked.set(a as~ i32, asked);
+        fading!.fade(asked * this.loudness, lowOf(b));
+      }
       return;
     }
     Voice? playing = this.voices.get(a as~ i32);
     if (playing is not null) {
       playing!.stop();
       this.voices.remove(a as~ i32);
+      this.asked.remove(a as~ i32);
+    }
+  }
+
+  /**
+   * **Every sound the child makes, `loudness` as loud** — 0 silent, 1 as it asked — from now on, and what is playing
+   * already faded there over `ms`. The child is not told: its own volumes stay its own, and this scales them.
+   */
+  void louder(this, f64 loudness, i32 ms) {
+    this.loudness = loudness < 0.0 ? 0.0 : loudness;
+    i32[] ids = this.voices.keys();
+    for (i32 i = 0; i < ids.len(); i++) {
+      Voice? v = this.voices.get(ids[i]);
+      f64? asked = this.asked.get(ids[i]);
+      if (v is not null && asked is not null) { v!.fade(asked! * this.loudness, ms); }
     }
   }
 

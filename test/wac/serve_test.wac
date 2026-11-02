@@ -334,6 +334,19 @@ export string test_a_childs_sounds_play_through_the_desktop_and_stop_with_its_wi
   r.desk.turn();
   t.isTrue(r.doc.said.indexOf("play 5 2 0 loop at 5000 from 1.5\n") >= 0, "started at a moment, from a way in: " + r.doc.said);
   t.isTrue(r.doc.said.indexOf("gain 5 800 250\n") >= 0, "and faded up: " + r.doc.said);
+  // Turned down by whoever serves it: what plays is faded there, and what it plays next starts there.
+  r.server.louder(0.5, 100);
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("gain 5 400 100\n") >= 0, "turned down, what plays was faded to half of what it asked: " + r.doc.said);
+  auto next = blip.play(0.6);
+  next.fade(0.2, 50);
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("play 6 2 300\n") >= 0, "and what it plays next starts at half: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("gain 6 100 50\n") >= 0, "and fades to half of what it asks: " + r.doc.said);
+  r.server.louder(1.0, 100);
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("gain 6 200 100\n") >= 0, "turned up again, back to what it asked: " + r.doc.said);
   r.server.answer(24, pair(9, 77), pair(1000, 0), "", u8[]());
   t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("77") >= 0, "a sound it never made is refused");
   string before = r.doc.said;
