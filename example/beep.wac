@@ -33,6 +33,12 @@ Node app(Ui ui, Page page, Sound beep, Sound drone, Vec<Voice> playing) {
       second.fade(0.6, 300);
       playing.push(second);
     }}>layers</button>
+    <button id="late" onclick={(ElementEvent e) => {
+      // Two for a moment already gone: both start now, as far in as they would have got — the same way in.
+      f64 at = page.now() - 500.0;
+      playing.push(drone.playAt(0.4, true, at, 0.0));
+      playing.push(drone.playAt(0.4, true, at, 0.0));
+    }}>late</button>
     <span id="count">{"\{count.get()}"}</span>
   </p>;
 }

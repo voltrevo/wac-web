@@ -93,9 +93,14 @@ Deno.test({
       await page.click("#layers");
       await waitInPage(page, `window.__starts.length === ${before + 2}`, null, { timeout: 10_000 });
       const [a, b] = await page.evaluate(`window.__starts.slice(${before})`) as number[][];
-      if (Math.abs(a[0] - b[0]) > 1e-9) throw new Error(`the layers start apart: ${a[0]} and ${b[0]}`);
+      if (Math.abs(a[0] - b[0]) > 1e-9 || a[1] !== b[1]) throw new Error(`the layers start apart: ${a} and ${b}`);
       if (!(a[0] > a[2] + 0.1 && a[0] < a[2] + 0.3)) throw new Error(`not started 200 ms ahead: at ${a[0]}, now ${a[2]}`);
       await waitInPage(page, "window.__ramps.includes(0.6)", null, { timeout: 10_000 });
+      const late = await page.evaluate("window.__starts.length") as number;
+      await page.click("#late");
+      await waitInPage(page, `window.__starts.length === ${late + 2}`, null, { timeout: 10_000 });
+      const [c, d] = await page.evaluate(`window.__starts.slice(${late})`) as number[][];
+      if (c[0] !== d[0] || c[1] !== d[1] || !(c[1] > 0.4)) throw new Error(`late layers start apart, or not as far in: ${c} and ${d}`);
       assertEquals(failures, [], "the page reported an error");
     } finally {
       await browser?.close();

@@ -1112,6 +1112,10 @@ export string documentSide() {
         // has done something on the page, so the first key or click resumes it.
         let ctx = null;
         const sounds = new Map(), voices = new Map();
+        // **Now, once for everything that arrived together** — the page's clock and the audio's both: voices started
+        // for one moment are placed by them, and read separately, either clock could move between two voices and start
+        // them apart.
+        let batchNow = null, batchAudio = null;
         const audio = () => {
           if (ctx) return ctx;
           ctx = new AudioContext({ latencyHint: "interactive" });
@@ -1288,9 +1292,10 @@ export string documentSide() {
             voices.set(voice, { src, gain });
             // **The page's clock to the audio's**: both read now, so a time on one is a time on the other. A time
             // already gone is now, from as far in as it would have got by now.
-            const ahead = at > 0 ? (at - (performance.timeOrigin + performance.now())) / 1000 : 0;
+            const ahead = at > 0 ? (at - (batchNow ?? performance.timeOrigin + performance.now())) / 1000 : 0;
             const into = Math.max(0, offset + (ahead < 0 ? -ahead : 0));
-            src.start(ahead > 0 ? ctx.currentTime + ahead : 0, loop ? into % buf.duration : Math.min(into, buf.duration));
+            if (batchAudio === null) batchAudio = ctx.currentTime;
+            src.start(ahead > 0 ? batchAudio + ahead : batchAudio, loop ? into % buf.duration : Math.min(into, buf.duration));
           },
           stop: (voice) => {
             const v = voices.get(voice);
@@ -1376,7 +1381,10 @@ export string documentSide() {
         document.addEventListener("dragover", (ev) => ev.preventDefault());
         document.addEventListener("drop", (ev) => { ev.preventDefault(); dropped(ev.dataTransfer); });
         const apply = (m) => ops[m[0]](...m.slice(1));
-        return (m) => { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); };
+        return (m) => {
+          batchNow = performance.timeOrigin + performance.now();
+          try { if (m[0] === "ops") { for (const x of m[1]) apply(x); } else apply(m); } finally { batchNow = null; batchAudio = null; }
+        };
       };
       """;
 }
