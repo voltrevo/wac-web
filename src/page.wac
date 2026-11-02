@@ -4,7 +4,7 @@
 // handle to everything the program draws (`element.wac`), and `page.mount(draw)` puts a view over it —
 // components that are functions of `Ui`, rendering only what changed (`view.wac`). What belongs to the
 // page rather than to an element is here: its title, the clock, timers and frames, files the user hands
-// over, a download, and `page.sys`, what the build granted.
+// over, a download, sound, and `page.sys`, what the build granted.
 //
 // **The program is an `async` function, and nothing blocks.** It waits for what happens later — a timer,
 // a frame, a file, an element's value, an event on an element it listens to — with `await`; each `await`
@@ -44,7 +44,7 @@ export * as html from "./tags.wac";
 export { Element, ElementEvent, Listen } from "./element.wac";
 // `wac.page` itself, for whoever answers it — a desktop drawing a program into a window, or a test.
 export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, batchOf, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
-         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_COUNT, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt, when } from "./line.wac";
+         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_SOUND, PAGE_PLAY, PAGE_STOP, PAGE_COUNT, PAGE_WINDOW, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt, when } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 // `wac.page` answered into an element this program holds — a desktop drawing a program into a window.
@@ -109,6 +109,8 @@ export struct Page {
   /** Whether a view has had something to render since `changed` last answered, and who waits to hear it. */
   bool woken;
   Ticket<void>? waking;
+  /** The last number given a sound or a voice: each is the page's own, numbered as handles are. */
+  i32 played;
 
   /**
    * **The page the program's host provides**, found by name: `Err` says why there is none — a program run
@@ -131,7 +133,7 @@ export struct Page {
   Page over(PageLine line, Sys sys) {
     Vec<View> views = Vec.create();
     Vec<fn<void(string)>?> watchers = Vec.create();
-    Page p = Page(line, Runner.create(), Elements.create(line), views, sys, false, "", watchers, false, null);
+    Page p = Page(line, Runner.create(), Elements.create(line), views, sys, false, "", watchers, false, null, 0);
     // A change held is a turn to end, whether or not a view has anything to render: a handler that only changed an
     // element of its own still has that change to send.
     line.onHeld = () => { p.wake(); };
@@ -256,6 +258,29 @@ export struct Page {
   /** Offer `bytes` to the user as a file called `name`. */
   void download(this, string name, u8[] bytes) { this.line.download(name, bytes); }
 
+  /**
+   * **A sound the page can play**: `samples` from -1 to 1, one channel, `rate` of them a second — made by the program,
+   * which is how a game has the sounds it has. Sent to the host once, here, and played from there as often as the
+   * program likes (`Sound.play`), so playing one costs a few bytes, whatever its length.
+   *
+   * **A browser plays nothing until the person has done something on the page** — a click or a key — and the
+   * host starts the sound then; what was played before that is not heard.
+   */
+  Sound sound(this, f64[] samples, i32 rate) {
+    u8[] b = u8[].filled(samples.len() * 2, 0 as u8);
+    for (i32 i = 0; i < samples.len(); i++) {
+      f64 x = samples[i];
+      if (x > 1.0) { x = 1.0; }
+      if (x < 0.0 - 1.0) { x = 0.0 - 1.0; }
+      i32 v = (x * 32767.0) as~ i32;
+      b[i * 2] = (v & 255) as@ u8;
+      b[i * 2 + 1] = ((v >> 8) & 255) as@ u8;
+    }
+    this.played++;
+    this.line.sound(this.played, rate, b);
+    return Sound(this, this.played, (samples.len() as f64) / (rate as f64));
+  }
+
   /** The next file the user hands over, waited for. The host keeps one handed over before anything asked. */
   Ticket<Picked> nextFile(this) {
     Ticket<Picked> t;
@@ -299,6 +324,37 @@ export struct Page {
 
   /** Run what is ready, until nothing is. */
   void drain(this) { this.runner.drain(); }
+}
+
+/** A sound sent to the host (`Page.sound`), to play. */
+export struct Sound {
+  Page page;
+  i32 id;
+  /** How long it lasts, played once. */
+  f64 seconds;
+
+  /** Play it once, at `volume` — 1 as it was made, 0 silent — over whatever else is playing. */
+  Voice play(this, f64 volume) { return this.start(volume, false); }
+
+  /** Play it over and over, until the voice is stopped: music, or a sound that lasts as long as something does. */
+  Voice loop(this, f64 volume) { return this.start(volume, true); }
+
+  Voice start(this, f64 volume, bool loop) {
+    Page p = this.page;
+    p.played++;
+    f64 v = volume < 0.0 ? 0.0 : volume;
+    p.line.play(p.played, this.id, (v * 1000.0) as~ i32, loop);
+    return Voice(p, p.played);
+  }
+}
+
+/** A sound playing (`Sound.play`, `Sound.loop`). */
+export struct Voice {
+  Page page;
+  i32 id;
+
+  /** Stop it, if it is still playing. */
+  void stop(this) { this.page.line.stop(this.id); }
 }
 
 /**

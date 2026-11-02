@@ -25,7 +25,7 @@
 
 import { Answer, FAULT_NONE, OP_CAPABILITY, Sys, ask } from "std";
 import { Result, Ticket } from "core";
-import { PAGE_CAPABILITY, PAGE_COUNT, PageLine } from "./line.wac";
+import { PAGE_CAPABILITY, PAGE_WINDOW, PageLine } from "./line.wac";
 import { Page } from "./page.wac";
 
 export string DESKTOP_CAPABILITY() { return "wac.desktop"; }
@@ -46,7 +46,7 @@ export static i32 DESKTOP_COPY = 3;
 export static i32 DESKTOP_PASTE = 4;
 /**
  * `text` a title → a window of the program's own: `n` which of its windows it is. The window's page is that window's
- * slice of `wac.page` — `PAGE_COUNT` requests from the capability's base, times `n` — which `openWindow` makes.
+ * slice of `wac.page` — `PAGE_WINDOW` requests from the capability's base, times `n` — which `openWindow` makes.
  */
 export static i32 DESKTOP_WINDOW = 5;
 /**
@@ -143,7 +143,7 @@ export struct Desktop {
     if (page.fault != FAULT_NONE()) { return Result.Err(page.text); }
     Answer w = await this.ask(DESKTOP_WINDOW, title);
     if (w.fault != FAULT_NONE()) { return Result.Err(w.text); }
-    i32 base = (page.n as~ i32) + (w.n as~ i32) * PAGE_COUNT;
+    i32 base = (page.n as~ i32) + (w.n as~ i32) * PAGE_WINDOW;
     Page p = Page.over(PageLine.of(this.sys.host, base, page.flags), this.sys);
     p.title(title);
     p.keepRendering();

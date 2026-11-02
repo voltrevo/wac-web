@@ -7,7 +7,7 @@
 import { Check } from "./check.wac";
 import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, PAGE_WINDOW, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
          PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
 /** Where the child's host numbers `wac.page`, and `wac.desktop`. */
@@ -45,11 +45,11 @@ struct ChildHost {
       this.give(id, Answer(0, "", u8[](), 2 as i64, 0 as i64, 0));
       return;
     }
-    if (op >= BASE + PAGE_COUNT && op < BASE + PAGE_COUNT * 4) {
+    if (op >= BASE + PAGE_WINDOW && op < BASE + PAGE_WINDOW * 4) {
       i32 k = op - BASE;
-      this.otherSlices = this.otherSlices + "\{k / PAGE_COUNT}:\{k % PAGE_COUNT};";
+      this.otherSlices = this.otherSlices + "\{k / PAGE_WINDOW}:\{k % PAGE_WINDOW};";
       // A batch is answered at once; the requests a page keeps open — its next event, its location — wait.
-      if (k % PAGE_COUNT == PAGE_BATCH) { this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); }
+      if (k % PAGE_WINDOW == PAGE_BATCH) { this.give(id, Answer(0, "", u8[](), 0 as i64, 0 as i64, 0)); }
       return;
     }
     if (op == DESK + DESKTOP_OPEN) {
@@ -301,5 +301,39 @@ export string test_a_program_opens_a_window_of_its_own_and_draws_in_that_windows
   t.eqStr(r.host!.otherSlices, "2:\{PAGE_EVENT};2:\{PAGE_LOCATION};2:\{PAGE_BATCH};2:\{PAGE_BATCH};",
           "the window's requests went to its own slice");
   t.eqI32(r.doc.findTag("p"), 0 - 1, "and not to the first window's");
+  return t.report();
+}
+
+/**
+ * **A window's sounds are the desktop page's**: made and played under the desktop's own numbers, and stopped when the
+ * window closes — a closed window is not heard.
+ */
+export string test_a_childs_sounds_play_through_the_desktop_and_stop_with_its_window() {
+  Check t = Check.create();
+  Rig r = rig();
+  schedule r.child.take;
+  r.desk.turn();
+  // A number the desktop page has used already, so the child's and the desktop's numbers differ.
+  r.desk.sound([0.0], 8000);
+  auto blip = r.child.sound([0.0, 0.5, 0.0 - 0.5, 1.0], 22050);
+  blip.play(0.5);
+  auto tune = blip.loop(0.25);
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("sound 2 22050 4\n") >= 0, "the sound was made on the desktop's page: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("play 3 2 500\n") >= 0, "played once, at half volume: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("play 4 2 250 loop\n") >= 0, "and over and over: " + r.doc.said);
+  tune.stop();
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("stop 4\n") >= 0, "the voice it stopped stopped: " + r.doc.said);
+  r.server.answer(24, pair(9, 77), pair(1000, 0), "", u8[]());
+  t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("77") >= 0, "a sound it never made is refused");
+  string before = r.doc.said;
+  r.server.close();
+  r.desk.turn();
+  string after = r.doc.said.slice(before.len(), r.doc.said.len());
+  t.isTrue(after.indexOf("stop 3\n") >= 0, "closing the window stopped what was still playing: " + after);
+  t.eqI32(after.indexOf("stop 4\n"), 0 - 1, "and not what had stopped already");
   return t.report();
 }

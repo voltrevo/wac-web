@@ -287,6 +287,9 @@ export string programSide() {
             case 19: fileAsks.push(id); return queueMicrotask(flush);
             case 20: { const f = ++lastFrame; frames.set(f, id); return send(["frame", f]); }
             case 21: locationAsks.push({ id, known: text }); return located();
+            case 23: return send(["sound", lo(a), Number(b), bytes], wacOwn(bytes));
+            case 24: return send(["play", hi(a), lo(a), hi(b) / 1000, lo(b) !== 0]);
+            case 25: return send(["stop", lo(a)]);
             // The changes the program held, in order, as each would have come alone; answered at once.
             case 22: {
               const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -1093,6 +1096,18 @@ export string documentSide() {
           const sy = el.height !== undefined && r.height > 0 ? el.height / r.height : 1;
           return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
         };
+        // **One audio context, made when a page first makes a sound**, with the lowest latency the browser offers:
+        // a game's sound is heard as soon after the key as can be. A browser keeps it suspended until the person
+        // has done something on the page, so the first key or click resumes it.
+        let ctx = null;
+        const sounds = new Map(), voices = new Map();
+        const audio = () => {
+          if (ctx) return ctx;
+          ctx = new AudioContext({ latencyHint: "interactive" });
+          const resume = () => { if (ctx.state !== "running") ctx.resume(); };
+          for (const kind of ["pointerdown", "keydown", "touchend"]) addEventListener(kind, resume, true);
+          return ctx;
+        };
         const ops = {
           make: (id, parent, tag, before) => {
             // `#shadow` is the parent's shadow root, opened — a page of its own inside it (`Element.shadow`).
@@ -1221,6 +1236,34 @@ export string documentSide() {
             queueMicrotask(() => emit(["value", req, value]));
           },
           title: (title) => { document.title = title; },
+          // **Sound**: each one decoded once into a buffer, and a voice a source playing it through its own gain.
+          sound: (id, rate, bytes) => {
+            const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const n = bytes.byteLength >> 1;
+            const buf = audio().createBuffer(1, Math.max(n, 1), rate);
+            const ch = buf.getChannelData(0);
+            for (let i = 0; i < n; i++) ch[i] = v.getInt16(i * 2, true) / 32767;
+            sounds.set(id, buf);
+          },
+          play: (voice, sound, volume, loop) => {
+            const buf = sounds.get(sound);
+            if (!buf) return;
+            const ctx = audio();
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.loop = loop;
+            const gain = ctx.createGain();
+            gain.gain.value = volume;
+            src.connect(gain).connect(ctx.destination);
+            src.onended = () => { if (voices.get(voice) === src) voices.delete(voice); };
+            voices.get(voice)?.stop();
+            voices.set(voice, src);
+            src.start();
+          },
+          stop: (voice) => {
+            const src = voices.get(voice);
+            if (src) { voices.delete(voice); src.stop(); }
+          },
           frame: (id) => { requestAnimationFrame(() => emit(["timer", id])); },
           download: (name, bytes) => {
             const a = document.createElement("a");

@@ -1,0 +1,38 @@
+// A sound made by the program and played on a click: a short square-wave beep, and a drone that loops until it is
+// stopped. What `test/audio_live.test.ts` builds and plays in a browser.
+
+import { ElementEvent, Node, Page, Sound, Ui, Voice, html.button, html.p, html.span } from "../src/page.wac";
+import { Vec } from "core";
+
+/** `seconds` of a square wave at `hz`, fading out, `rate` samples a second. */
+f64[] square(f64 hz, f64 seconds, i32 rate) {
+  i32 n = (seconds * (rate as f64)) as~ i32;
+  f64[] out = f64[].filled(n, 0.0);
+  for (i32 i = 0; i < n; i++) {
+    f64 phase = (i as f64) * hz / (rate as f64);
+    f64 wave = phase - ((phase as~ i32) as f64) < 0.5 ? 0.3 : 0.0 - 0.3;
+    out[i] = wave * (1.0 - (i as f64) / (n as f64));
+  }
+  return out;
+}
+
+Node app(Ui ui, Sound beep, Sound drone, Vec<Voice> playing) {
+  auto count = ui.state(0);
+  return <p>
+    <button id="beep" onclick={(ElementEvent e) => { beep.play(1.0); count.set(count.get() + 1); }}>beep</button>
+    <button id="drone" onclick={(ElementEvent e) => { playing.push(drone.loop(0.5)); }}>drone</button>
+    <button id="hush" onclick={(ElementEvent e) => {
+      for (i32 i = 0; i < playing.len(); i++) { playing.get(i).stop(); }
+      playing.clear();
+    }}>hush</button>
+    <span id="count">{"\{count.get()}"}</span>
+  </p>;
+}
+
+export async i32 main(Page page) {
+  Sound beep = page.sound(square(880.0, 0.12, 22050), 22050);
+  Sound drone = page.sound(square(110.0, 1.0, 22050), 22050);
+  Vec<Voice> playing = Vec.create();
+  page.mount((Ui ui) => app(ui, beep, drone, playing));
+  return 0;
+}

@@ -30,7 +30,7 @@ import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
-export string PAGE_VERSION() { return "1.0.0"; }
+export string PAGE_VERSION() { return "1.1.0"; }
 
 /** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
 export static i32 PAGE_MAKE = 0;
@@ -86,8 +86,26 @@ export static i32 PAGE_LOCATION = 21;
  * → nothing, at once. What `PageLine.flush` sends, and `batchOf` reads.
  */
 export static i32 PAGE_BATCH = 22;
+/**
+ * `a` the sound's number, `b` its sample rate, `bytes` its samples — one channel, each a little-endian `i16`: a sound
+ * the page can play from now on, kept until the page is gone. Sent once, played as often as the program likes.
+ */
+export static i32 PAGE_SOUND = 23;
+/**
+ * `a` pair(voice, sound), `b` pair(volume in thousandths, 1 to loop and 0 to play once): the sound, playing now as
+ * that voice. A voice's number is the program's to choose, as a handle's is.
+ */
+export static i32 PAGE_PLAY = 24;
+/** `a` the voice: stopped, if it is still playing. */
+export static i32 PAGE_STOP = 25;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 23;
+export static i32 PAGE_COUNT = 26;
+/**
+ * **How far apart a desktop's windows' slices of `wac.page` are**: more than `PAGE_COUNT`, so a request added later
+ * does not move every window but the first — a program and the desktop it runs in are built separately, and each
+ * finds its windows' requests where the other put them for as long as both agree on this.
+ */
+export static i32 PAGE_WINDOW = 64;
 
 /** In the `flags` of the host's answer to the lookup: send each change as it is made, not batched. */
 export static i32 PAGE_ONE_AT_A_TIME = 1;
@@ -275,6 +293,11 @@ export struct PageLine {
   void title(this, string t) { this.tell(PAGE_TITLE, 0 as i64, 0 as i64, t, u8[]()); }
   void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
   void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }
+  void sound(this, i32 id, i32 rate, u8[] samples) { this.tell(PAGE_SOUND, id as i64, rate as i64, "", samples); }
+  void play(this, i32 voice, i32 sound, i32 thousandths, bool loop) {
+    this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, loop ? 1 : 0), "", u8[]());
+  }
+  void stop(this, i32 voice) { this.tell(PAGE_STOP, voice as i64, 0 as i64, "", u8[]()); }
 
   Ticket<Answer> value(this, i32 id) { return this.ask(PAGE_VALUE, id as i64, 0 as i64, "", u8[]()); }
   Ticket<Answer> event(this) { return this.ask(PAGE_EVENT, 0 as i64, 0 as i64, "", u8[]()); }

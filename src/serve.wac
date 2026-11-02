@@ -12,14 +12,17 @@
 // **What comes back is the child's to ask for**, as `line.wac` has it: its next event is answered from what its
 // elements heard, a frame by this page's next frame, a value by the element's, a file by what the desktop hands it
 // (`hand`). Its location never changes — a window has no address bar.
+//
+// **Its sounds are this page's**, made and played through it under this side's numbers, and they stop when the
+// window closes: a closed window is not heard.
 
 import { Answer, FAULT_UNSUPPORTED, Provider } from "std";
 import { Map, Queue, Ticket, Vec, hashI32, i32Eq } from "core";
 import { Element, ElementEvent, Listen, whyNotAttr, whyNotTag } from "./element.wac";
-import { Page } from "./page.wac";
+import { Page, Sound, Voice } from "./page.wac";
 import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE,
          PAGE_FOCUS, PAGE_FRAME, PAGE_LISTEN, PAGE_LOCATION, PAGE_LOG, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_MOVE,
-         PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_TEXT, PAGE_TITLE,
+         PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PLAY, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_SOUND, PAGE_STOP, PAGE_TEXT, PAGE_TITLE,
          PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt, when } from "./line.wac";
 
 /** What a closed page's requests are answered. */
@@ -50,6 +53,9 @@ export struct PageServer {
   Vec<string> refused;
   /** Closed (`close`): every request answered "closed" from now on. */
   bool closed;
+  /** The child's sounds, and the voices it played, by its numbers. */
+  Map<i32, Sound> sounds;
+  Map<i32, Voice> voices;
 
   /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
   PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
@@ -60,7 +66,7 @@ export struct PageServer {
     Queue<Answer> handed;
     Queue<Ticket<Answer>> wanting;
     return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
-                      Vec.create(), false);
+                      Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq));
   }
 
   /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
@@ -76,6 +82,9 @@ export struct PageServer {
    */
   void close(this) {
     this.closed = true;
+    Voice[] playing = this.voices.values();
+    for (i32 i = 0; i < playing.len(); i++) { playing[i].stop(); }
+    this.voices = Map.create(hashI32, i32Eq);
     while (true) {
       Ticket<Answer>? t = this.asking.pop();
       if (t is null) { break; }
@@ -181,6 +190,41 @@ export struct PageServer {
     return true;
   }
 
+  /** A sound made, played or stopped: the child's numbers for them, this page's sounds and voices. */
+  void audio(this, i32 k, i64 a, i64 b, u8[] bytes) {
+    if (k == PAGE_SOUND) {
+      i32 rate = b as~ i32;
+      if (rate < 3000 || rate > 192000) {
+        this.refuse("sound: \{rate} is not a sample rate a page plays");
+        return;
+      }
+      f64[] samples = f64[].filled(bytes.len() / 2, 0.0);
+      for (i32 i = 0; i < samples.len(); i++) {
+        i32 v = (bytes[i * 2] as i32) | ((bytes[i * 2 + 1] as i32) << 8);
+        if (v >= 32768) { v = v - 65536; }
+        samples[i] = (v as f64) / 32767.0;
+      }
+      this.sounds.set(a as~ i32, this.page.sound(samples, rate));
+      return;
+    }
+    if (k == PAGE_PLAY) {
+      Sound? sound = this.sounds.get(lowOf(a));
+      if (sound is null) {
+        this.refuse("play: \{lowOf(a)} is not a sound of the child's");
+        return;
+      }
+      f64 volume = (highOf(b) as f64) / 1000.0;
+      Voice v = lowOf(b) != 0 ? sound!.loop(volume) : sound!.play(volume);
+      this.voices.set(highOf(a), v);
+      return;
+    }
+    Voice? playing = this.voices.get(a as~ i32);
+    if (playing is not null) {
+      playing!.stop();
+      this.voices.remove(a as~ i32);
+    }
+  }
+
   /** One change, made through this program's own handles once it has been checked. */
   void change(this, i32 k, i64 a, i64 b, string text, u8[] bytes) {
     i32 h = lowOf(a);
@@ -194,6 +238,10 @@ export struct PageServer {
     }
     if (k == PAGE_DOWNLOAD) {
       this.page.download(text, bytes);
+      return;
+    }
+    if (k == PAGE_SOUND || k == PAGE_PLAY || k == PAGE_STOP) {
+      this.audio(k, a, b, bytes);
       return;
     }
     if (k == PAGE_MAKE || k == PAGE_MAKE_TEXT) {
