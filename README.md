@@ -66,7 +66,7 @@ of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses
 | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
 | `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page — one per file for a folder, picked with `webkitdirectory` or dropped, named by its path inside it |
 | `download(name, bytes)` | offer bytes to the user as a file |
-| `sound(samples, rate)` → `Sound`; `.play(volume)`, `.loop(volume)` → `Voice`; `.stop()` | sound the program made — samples from -1 to 1, one channel — sent once and played as often as it likes; heard once the person has clicked or pressed a key on the page |
+| `sound(samples, rate)` → `Sound`; `.play(volume)`, `.loop(volume)`, `.playAt(volume, loop, at, offset)` → `Voice`; `.stop()`, `.fade(volume, ms)` | sound the program made — samples from -1 to 1, one channel — sent once and played as often as it likes, now or at a moment by `now()`'s clock — voices started for one moment start together, to the sample — and faded smoothly; heard once the person has clicked or pressed a key on the page |
 | `sys` | what the build granted — see below |
 
 A component starts work that outlives a render from an effect: a timer with `ui.every`, a loop awaiting

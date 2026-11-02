@@ -17,8 +17,8 @@ import { Answer, FAULT_UNSUPPORTED, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MO
          answered } from "std";
 import { Elements } from "./element.wac";
 import { Page } from "./page.wac";
-import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
-         PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt } from "./line.wac";
+import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_GAIN, PAGE_LOCATION, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
+         PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt, getF64 } from "./line.wac";
 
 /** Where this document's `wac.page` numbers start, as a host would choose them. */
 static i32 BASE = 4096;
@@ -249,10 +249,12 @@ export struct TestDoc {
     if (k == 17) { this.said = this.said + "download " + text + "\n"; return; }
     if (k == PAGE_SOUND) { this.said = this.said + "sound \{a} \{b} \{bytes.len() / 2}\n"; return; }
     if (k == PAGE_PLAY) {
-      this.said = this.said + "play \{highOf(a)} \{lowOf(a)} \{highOf(b)}" + (lowOf(b) != 0 ? " loop" : "") + "\n";
+      string when = bytes.len() >= 16 ? " at \{getF64(bytes, 0)} from \{getF64(bytes, 8)}" : "";
+      this.said = this.said + "play \{highOf(a)} \{lowOf(a)} \{highOf(b)}" + (lowOf(b) != 0 ? " loop" : "") + when + "\n";
       return;
     }
     if (k == PAGE_STOP) { this.said = this.said + "stop \{a}\n"; return; }
+    if (k == PAGE_GAIN) { this.said = this.said + "gain \{a} \{highOf(b)} \{lowOf(b)}\n"; return; }
     if (k == PAGE_EVENT) { this.eventAsks.push(id); return; }
     if (k == PAGE_BATCH) {
       Change[] changes = batchOf(bytes);

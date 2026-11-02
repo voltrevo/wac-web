@@ -327,13 +327,20 @@ export string test_a_childs_sounds_play_through_the_desktop_and_stop_with_its_wi
   r.child.turn();
   r.desk.turn();
   t.isTrue(r.doc.said.indexOf("stop 4\n") >= 0, "the voice it stopped stopped: " + r.doc.said);
+  // Started for a moment, from a way in, and faded: passed on as asked.
+  auto layer = blip.playAt(0.0, true, 5000.0, 1.5);
+  layer.fade(0.8, 250);
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf("play 5 2 0 loop at 5000 from 1.5\n") >= 0, "started at a moment, from a way in: " + r.doc.said);
+  t.isTrue(r.doc.said.indexOf("gain 5 800 250\n") >= 0, "and faded up: " + r.doc.said);
   r.server.answer(24, pair(9, 77), pair(1000, 0), "", u8[]());
   t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("77") >= 0, "a sound it never made is refused");
   string before = r.doc.said;
   r.server.close();
   r.desk.turn();
   string after = r.doc.said.slice(before.len(), r.doc.said.len());
-  t.isTrue(after.indexOf("stop 3\n") >= 0, "closing the window stopped what was still playing: " + after);
+  t.isTrue(after.indexOf("stop 3\n") >= 0 && after.indexOf("stop 5\n") >= 0, "closing the window stopped what was still playing: " + after);
   t.eqI32(after.indexOf("stop 4\n"), 0 - 1, "and not what had stopped already");
   return t.report();
 }

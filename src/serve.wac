@@ -22,8 +22,8 @@ import { Element, ElementEvent, Listen, whyNotAttr, whyNotTag } from "./element.
 import { Page, Sound, Voice } from "./page.wac";
 import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE,
          PAGE_FOCUS, PAGE_FRAME, PAGE_LISTEN, PAGE_LOCATION, PAGE_LOG, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_MOVE,
-         PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PLAY, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_SOUND, PAGE_STOP, PAGE_TEXT, PAGE_TITLE,
-         PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, highOf, lowOf, quadAt, when } from "./line.wac";
+         PAGE_GAIN, PAGE_PIXELS, PAGE_PIXELS_IN, PAGE_PLAY, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_SOUND, PAGE_STOP, PAGE_TEXT, PAGE_TITLE,
+         PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, getF64, highOf, lowOf, quadAt, when } from "./line.wac";
 
 /** What a closed page's requests are answered. */
 Answer closedAnswer() { return Answer(FAULT_UNSUPPORTED(), "the page was closed", u8[](), 0 as i64, 0 as i64, 0); }
@@ -214,8 +214,15 @@ export struct PageServer {
         return;
       }
       f64 volume = (highOf(b) as f64) / 1000.0;
-      Voice v = lowOf(b) != 0 ? sound!.loop(volume) : sound!.play(volume);
+      // When and from where, as the child asked: its clock and this page's are the same one.
+      Voice v = bytes.len() >= 16 ? sound!.playAt(volume, lowOf(b) != 0, getF64(bytes, 0), getF64(bytes, 8))
+                                  : (lowOf(b) != 0 ? sound!.loop(volume) : sound!.play(volume));
       this.voices.set(highOf(a), v);
+      return;
+    }
+    if (k == PAGE_GAIN) {
+      Voice? fading = this.voices.get(a as~ i32);
+      if (fading is not null) { fading!.fade((highOf(b) as f64) / 1000.0, lowOf(b)); }
       return;
     }
     Voice? playing = this.voices.get(a as~ i32);
@@ -240,7 +247,7 @@ export struct PageServer {
       this.page.download(text, bytes);
       return;
     }
-    if (k == PAGE_SOUND || k == PAGE_PLAY || k == PAGE_STOP) {
+    if (k == PAGE_SOUND || k == PAGE_PLAY || k == PAGE_STOP || k == PAGE_GAIN) {
       this.audio(k, a, b, bytes);
       return;
     }

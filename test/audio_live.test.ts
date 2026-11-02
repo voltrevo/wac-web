@@ -46,6 +46,14 @@ const WATCH = `
     return start.apply(this, a);
   };
   AudioBufferSourceNode.prototype.stop = function (...a) { window.__stopped++; return stop.apply(this, a); };
+  window.__starts = []; window.__ramps = [];
+  const realStart = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function (when, offset) {
+    window.__starts.push([when ?? 0, offset ?? 0, this.context.currentTime]);
+    return realStart.call(this, when, offset);
+  };
+  const ramp = AudioParam.prototype.linearRampToValueAtTime;
+  AudioParam.prototype.linearRampToValueAtTime = function (v, t) { window.__ramps.push(v); return ramp.call(this, v, t); };
 `;
 
 Deno.test({
@@ -80,6 +88,14 @@ Deno.test({
       const stoppedBefore = await page.evaluate("window.__stopped") as number;
       await page.click("#hush");
       await waitInPage(page, `window.__stopped > ${stoppedBefore}`, null, { timeout: 10_000 });
+      // Two layers for the same moment, 200 ms ahead: both start at the same audio time, ahead of now, and one fades up.
+      const before = await page.evaluate("window.__starts.length") as number;
+      await page.click("#layers");
+      await waitInPage(page, `window.__starts.length === ${before + 2}`, null, { timeout: 10_000 });
+      const [a, b] = await page.evaluate(`window.__starts.slice(${before})`) as number[][];
+      if (Math.abs(a[0] - b[0]) > 1e-9) throw new Error(`the layers start apart: ${a[0]} and ${b[0]}`);
+      if (!(a[0] > a[2] + 0.1 && a[0] < a[2] + 0.3)) throw new Error(`not started 200 ms ahead: at ${a[0]}, now ${a[2]}`);
+      await waitInPage(page, "window.__ramps.includes(0.6)", null, { timeout: 10_000 });
       assertEquals(failures, [], "the page reported an error");
     } finally {
       await browser?.close();

@@ -289,8 +289,14 @@ export string programSide() {
             case 20: { const f = ++lastFrame; frames.set(f, id); return send(["frame", f]); }
             case 21: locationAsks.push({ id, known: text }); return located();
             case 23: return send(["sound", lo(a), Number(b), bytes], wacOwn(bytes));
-            case 24: return send(["play", hi(a), lo(a), hi(b) / 1000, lo(b) !== 0]);
+            case 24: {
+              // When, by the page's clock, and how far in: two little-endian f64s, when the program gave them.
+              const when = bytes.length >= 16 ? new DataView(bytes.buffer, bytes.byteOffset, 16) : null;
+              return send(["play", hi(a), lo(a), hi(b) / 1000, lo(b) !== 0,
+                           when ? when.getFloat64(0, true) : 0, when ? when.getFloat64(8, true) : 0]);
+            }
             case 25: return send(["stop", lo(a)]);
+            case 26: return send(["gain", lo(a), hi(b) / 1000, lo(b)]);
             // The changes the program held, in order, as each would have come alone; answered at once.
             case 22: {
               const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -1267,7 +1273,7 @@ export string documentSide() {
             for (let i = 0; i < n; i++) ch[i] = v.getInt16(i * 2, true) / 32767;
             sounds.set(id, buf);
           },
-          play: (voice, sound, volume, loop) => {
+          play: (voice, sound, volume, loop, at, offset) => {
             const buf = sounds.get(sound);
             if (!buf) return;
             const ctx = audio();
@@ -1277,14 +1283,26 @@ export string documentSide() {
             const gain = ctx.createGain();
             gain.gain.value = volume;
             src.connect(gain).connect(ctx.destination);
-            src.onended = () => { if (voices.get(voice) === src) voices.delete(voice); };
-            voices.get(voice)?.stop();
-            voices.set(voice, src);
-            src.start();
+            src.onended = () => { if (voices.get(voice)?.src === src) voices.delete(voice); };
+            voices.get(voice)?.src.stop();
+            voices.set(voice, { src, gain });
+            // **The page's clock to the audio's**: both read now, so a time on one is a time on the other. A time
+            // already gone is now, from as far in as it would have got by now.
+            const ahead = at > 0 ? (at - (performance.timeOrigin + performance.now())) / 1000 : 0;
+            const into = Math.max(0, offset + (ahead < 0 ? -ahead : 0));
+            src.start(ahead > 0 ? ctx.currentTime + ahead : 0, loop ? into % buf.duration : Math.min(into, buf.duration));
           },
           stop: (voice) => {
-            const src = voices.get(voice);
-            if (src) { voices.delete(voice); src.stop(); }
+            const v = voices.get(voice);
+            if (v) { voices.delete(voice); v.src.stop(); }
+          },
+          gain: (voice, volume, ms) => {
+            const v = voices.get(voice);
+            if (!v || !ctx) return;
+            const g = v.gain.gain, t = ctx.currentTime;
+            g.cancelScheduledValues(t);
+            g.setValueAtTime(g.value, t);
+            g.linearRampToValueAtTime(volume, t + Math.max(ms, 1) / 1000);
           },
           frame: (id) => { requestAnimationFrame(() => emit(["timer", id])); },
           download: (name, bytes) => {

@@ -30,7 +30,7 @@ import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
-export string PAGE_VERSION() { return "1.1.0"; }
+export string PAGE_VERSION() { return "1.2.0"; }
 
 /** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
 export static i32 PAGE_MAKE = 0;
@@ -93,14 +93,18 @@ export static i32 PAGE_BATCH = 22;
  */
 export static i32 PAGE_SOUND = 23;
 /**
- * `a` pair(voice, sound), `b` pair(volume in thousandths, 1 to loop and 0 to play once): the sound, playing now as
- * that voice. A voice's number is the program's to choose, as a handle's is.
+ * `a` pair(voice, sound), `b` pair(volume in thousandths, 1 to loop and 0 to play once): the sound, playing as that
+ * voice. A voice's number is the program's to choose, as a handle's is. `bytes`, when there are any, are two
+ * little-endian `f64`s: when to start, in milliseconds by the page's clock (`Page.now`) — 0, or a time gone, for now
+ * — and how far into the sound, in seconds. Voices started for the same moment start together, to the sample.
  */
 export static i32 PAGE_PLAY = 24;
 /** `a` the voice: stopped, if it is still playing. */
 export static i32 PAGE_STOP = 25;
+/** `a` the voice, `b` pair(volume in thousandths, milliseconds to get there): its volume, changed smoothly. */
+export static i32 PAGE_GAIN = 26;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 26;
+export static i32 PAGE_COUNT = 27;
 /**
  * **How far apart a desktop's windows' slices of `wac.page` are**: more than `PAGE_COUNT`, so a request added later
  * does not move every window but the first — a program and the desktop it runs in are built separately, and each
@@ -133,6 +137,18 @@ export i64 pair(i32 high, i32 low) { return ((high as i64) << 32) | ((low as i64
 // `as@` keeps the bits: a half that was -1 comes back -1, where `as~` would give the nearest `i32` to 4294967295.
 export i32 highOf(i64 v) { return (v >> 32) as@ i32; }
 export i32 lowOf(i64 v) { return v as@ i32; }
+
+/** An `f64` as eight little-endian bytes at `at` — `PAGE_PLAY`'s when and how far in. */
+export void putF64(u8[] b, i32 at, f64 v) {
+  u64 bits = f64.toBits(v);
+  for (i32 k = 0; k < 8; k++) { b[at + k] = ((bits >> (((8 * k) as i64) as@ u64)) & (255 as u64)) as@ u8; }
+}
+
+export f64 getF64(u8[] b, i32 at) {
+  u64 bits = 0 as u64;
+  for (i32 k = 0; k < 8; k++) { bits = bits | ((b[at + k] as u64) << (((8 * k) as i64) as@ u64)); }
+  return f64.fromBits(bits);
+}
 
 /** Four 16-bit fields in one `i64`, `x` at the top — `PAGE_PIXELS_IN`'s corner and size. */
 export i64 quad(i32 x, i32 y, i32 w, i32 h) {
@@ -305,6 +321,13 @@ export struct PageLine {
     this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, loop ? 1 : 0), "", u8[]());
   }
   void stop(this, i32 voice) { this.tell(PAGE_STOP, voice as i64, 0 as i64, "", u8[]()); }
+  void playAt(this, i32 voice, i32 sound, i32 thousandths, bool loop, f64 at, f64 offset) {
+    u8[] when = u8[].filled(16, 0 as u8);
+    putF64(when, 0, at);
+    putF64(when, 8, offset);
+    this.tell(PAGE_PLAY, pair(voice, sound), pair(thousandths, loop ? 1 : 0), "", when);
+  }
+  void gain(this, i32 voice, i32 thousandths, i32 ms) { this.tell(PAGE_GAIN, voice as i64, pair(thousandths, ms), "", u8[]()); }
 
   Ticket<Answer> value(this, i32 id) { return this.ask(PAGE_VALUE, id as i64, 0 as i64, "", u8[]()); }
   Ticket<Answer> event(this) { return this.ask(PAGE_EVENT, 0 as i64, 0 as i64, "", u8[]()); }

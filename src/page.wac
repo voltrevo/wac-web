@@ -44,7 +44,7 @@ export * as html from "./tags.wac";
 export { Element, ElementEvent, Listen } from "./element.wac";
 // `wac.page` itself, for whoever answers it — a desktop drawing a program into a window, or a test.
 export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, batchOf, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
-         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_SOUND, PAGE_PLAY, PAGE_STOP, PAGE_COUNT, PAGE_WINDOW, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, quad, quadAt, when } from "./line.wac";
+         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_SOUND, PAGE_PLAY, PAGE_STOP, PAGE_GAIN, PAGE_COUNT, PAGE_WINDOW, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, putF64, getF64, quad, quadAt, when } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 // `wac.page` answered into an element this program holds — a desktop drawing a program into a window.
@@ -346,6 +346,19 @@ export struct Sound {
     p.line.play(p.played, this.id, (v * 1000.0) as~ i32, loop);
     return Voice(p, p.played);
   }
+
+  /**
+   * **Played at a moment**: `at` milliseconds by the page's clock (`Page.now`), `offset` seconds into the sound.
+   * Several started for the same moment play together, to the sample — the layers of a song, each its own voice,
+   * turned up and down as the program likes (`Voice.fade`) without ever drifting apart.
+   */
+  Voice playAt(this, f64 volume, bool loop, f64 at, f64 offset) {
+    Page p = this.page;
+    p.played++;
+    f64 v = volume < 0.0 ? 0.0 : volume;
+    p.line.playAt(p.played, this.id, (v * 1000.0) as~ i32, loop, at, offset);
+    return Voice(p, p.played);
+  }
 }
 
 /** A sound playing (`Sound.play`, `Sound.loop`). */
@@ -355,6 +368,12 @@ export struct Voice {
 
   /** Stop it, if it is still playing. */
   void stop(this) { this.page.line.stop(this.id); }
+
+  /** Its volume to `volume`, smoothly over `ms` milliseconds. */
+  void fade(this, f64 volume, i32 ms) {
+    f64 v = volume < 0.0 ? 0.0 : volume;
+    this.page.line.gain(this.id, (v * 1000.0) as~ i32, ms < 0 ? 0 : ms);
+  }
 }
 
 /**

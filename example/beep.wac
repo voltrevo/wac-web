@@ -16,7 +16,7 @@ f64[] square(f64 hz, f64 seconds, i32 rate) {
   return out;
 }
 
-Node app(Ui ui, Sound beep, Sound drone, Vec<Voice> playing) {
+Node app(Ui ui, Page page, Sound beep, Sound drone, Vec<Voice> playing) {
   auto count = ui.state(0);
   return <p>
     <button id="beep" onclick={(ElementEvent e) => { beep.play(1.0); count.set(count.get() + 1); }}>beep</button>
@@ -25,6 +25,14 @@ Node app(Ui ui, Sound beep, Sound drone, Vec<Voice> playing) {
       for (i32 i = 0; i < playing.len(); i++) { playing.get(i).stop(); }
       playing.clear();
     }}>hush</button>
+    <button id="layers" onclick={(ElementEvent e) => {
+      // Two layers started for the same moment, the second silent and then faded up.
+      f64 at = page.now() + 200.0;
+      playing.push(drone.playAt(0.5, true, at, 0.0));
+      Voice second = beep.playAt(0.0, true, at, 0.0);
+      second.fade(0.6, 300);
+      playing.push(second);
+    }}>layers</button>
     <span id="count">{"\{count.get()}"}</span>
   </p>;
 }
@@ -33,6 +41,6 @@ export async i32 main(Page page) {
   Sound beep = page.sound(square(880.0, 0.12, 22050), 22050);
   Sound drone = page.sound(square(110.0, 1.0, 22050), 22050);
   Vec<Voice> playing = Vec.create();
-  page.mount((Ui ui) => app(ui, beep, drone, playing));
+  page.mount((Ui ui) => app(ui, page, beep, drone, playing));
   return 0;
 }
