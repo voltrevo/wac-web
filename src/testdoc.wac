@@ -164,7 +164,7 @@ export struct TestDoc {
              i32 selStart, i32 selEnd) {
     if (this.eventAsks.len() == 0) { return; }
     i32 id = this.eventAsks.remove(0);
-    this.answer(id, eventAnswer(Happened(seq, kind, target, listener, value, x, y, mods, selStart, selEnd)));
+    this.answer(id, eventAnswer(Happened(seq, kind, target, listener, value, x, y, mods, selStart, selEnd, this.now)));
   }
 
   /** Move the clock on by `ms`, waking each sleep that falls due, earliest first. */

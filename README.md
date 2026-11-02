@@ -38,6 +38,7 @@ A project of your own starts from [`template/`](template/), which depends on thi
 | `Ref r = ui.ref()`, `ref={r}` | a name for an element the component draws: `r.element()` is its handle once the render that made it is applied — in an effect, or a handler |
 | `key={…}` | which instance or element a node is, among its siblings |
 | `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents, and `prevent="Ctrl+s"` prevents a key only with exactly those modifiers held |
+| `e.at`; `onwheel`'s `e.value`; `element.on("resize", …)` | when an event happened, by `page.now()`'s clock — `page.now() - e.at` is how long it took to arrive; how far a wheel turned, in pixels down; an element's size on screen in device pixels, in `e.x` and `e.y`, as it changes |
 
 **Only what changed renders.** A `set` marks the component that made the cell; a child whose attributes
 are unchanged — compared by the snapshots the compiler gives each component tag (`design/lang/0017`) —

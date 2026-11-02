@@ -50,11 +50,15 @@ export struct ElementEvent {
   string kind;
   /** The handle it happened on: the listener or something under it. */
   Element target;
-  /** An input's value for `input` and `change`; the key for a key event, as the browser names it. */
+  /**
+   * An input's value for `input` and `change`; the key for a key event, as the browser names it; for `wheel`, how far
+   * it turned, in whole pixels down (`"-120"` is up); for `resize`, the device's pixels to a CSS pixel.
+   */
   string value;
   /**
    * Where the pointer is, in the pixels of the element that listened — not of whatever smaller element
-   * it is over — for a pointer event; 0 otherwise. A canvas's are its backing store's.
+   * it is over — for a pointer event; 0 otherwise. A canvas's are its backing store's. For `resize`, which a
+   * program listens for with `Element.on`, the element's width and height on screen, in the device's pixels.
    */
   i32 x;
   i32 y;
@@ -70,6 +74,12 @@ export struct ElementEvent {
    */
   i32 selStart;
   i32 selEnd;
+  /**
+   * **When it happened**: in milliseconds by the page's clock (`Page.now`), as the browser stamped it — before it
+   * crossed to the program. `page.now() - e.at` is how long it took to arrive, and a game measures from it how long a
+   * key takes to show.
+   */
+  f64 at;
 }
 
 /** Every live handle, by id, and what the program has seen. */
@@ -109,7 +119,7 @@ export struct Elements {
         return;
       }
       Happened h = happenedOf(t.value());
-      es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd);
+      es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd, h.at);
       es.follow();
     });
   }
@@ -127,13 +137,13 @@ export struct Elements {
    * that is gone.
    */
   void deliver(this, i32 seq, string kind, i32 targetId, i32 listenerId, string value, i32 x, i32 y, i32 mods,
-               i32 selStart, i32 selEnd) {
+               i32 selStart, i32 selEnd, f64 at) {
     if (seq > this.seen) { this.seen = seq; }
     if (listenerId < 0 || listenerId >= this.byId.len() || targetId < 0 || targetId >= this.byId.len()) { return; }
     Element? l = this.byId.get(listenerId);
     Element? t = this.byId.get(targetId);
     if (l is null || t is null) { return; }
-    l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd));
+    l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd, at));
   }
 }
 

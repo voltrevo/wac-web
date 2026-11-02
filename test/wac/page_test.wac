@@ -449,3 +449,26 @@ export string test_a_location_the_host_answers_at_once_is_where_the_page_starts(
   t.eqStr(page.location(), "/tour", "and follows it from there");
   return t.report();
 }
+
+async f64 whenKeyed(Page page) {
+  page.root().listen("keydown", Listen.none());
+  ElementEvent e = await page.root().next();
+  return e.at;
+}
+
+/**
+ * **An event says when it happened**, by the page's own clock, so a program can tell how long one took to reach it —
+ * a game, how long a key takes to show.
+ */
+export string test_an_event_says_when_it_happened_by_the_pages_clock() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = doc.page();
+  schedule page.take;
+  Ticket<f64> at = whenKeyed(page);
+  doc.advance(1234);
+  doc.event(1, "keydown", 0, 0, "ArrowLeft", 0, 0, 0, 0 - 1, 0 - 1);
+  t.isTrue(at.settled(), "the key was heard");
+  t.isTrue(at.value() == page.now() && at.value() >= 1234.0, "stamped with the time it happened: \{at.value()}");
+  return t.report();
+}

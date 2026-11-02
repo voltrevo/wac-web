@@ -70,8 +70,9 @@ export static i32 PAGE_LOG = 16;
 export static i32 PAGE_DOWNLOAD = 17;
 /**
  * → the next event on an element the program listens to: `n` pair(listener, target), `m` pair(x, y), `flags` the
- * modifier bits, `text` the value, `bytes` twelve bytes — the event's number, the caret's start and end, each a
- * little-endian `i32` — then the kind.
+ * modifier bits, `text` the value, `bytes` twenty bytes — the event's number, the caret's start and end, each a
+ * little-endian `i32`, and when it happened, in microseconds by the page's clock, a little-endian `i64` — then the
+ * kind.
  */
 export static i32 PAGE_EVENT = 18;
 /** → the next file the user hands over: `text` its name, `bytes` its contents — or, with `flags` 1, why it could not be read. */
@@ -151,6 +152,8 @@ export struct Happened {
   i32 mods;
   i32 selStart;
   i32 selEnd;
+  /** When it happened, in milliseconds by the page's clock (`Page.now`). */
+  f64 at;
 }
 
 void putI32(u8[] b, i32 at, i32 v) {
@@ -166,22 +169,26 @@ i32 getI32(u8[] b, i32 at) {
 /** An event as `PAGE_EVENT` answers it — for a host written in wac, which is a desktop or a test. */
 export Answer eventAnswer(Happened h) {
   u8[] kind = h.kind.toBytes();
-  u8[] b = u8[].filled(12 + kind.len(), 0 as u8);
+  u8[] b = u8[].filled(20 + kind.len(), 0 as u8);
   putI32(b, 0, h.seq);
   putI32(b, 4, h.selStart);
   putI32(b, 8, h.selEnd);
-  b.copyFrom(kind, 0, 12, kind.len());
+  i64 micros = (h.at * 1000.0) as~ i64;
+  putI32(b, 12, lowOf(micros));
+  putI32(b, 16, highOf(micros));
+  b.copyFrom(kind, 0, 20, kind.len());
   return Answer(0, h.value, b, pair(h.listener, h.target), pair(h.x, h.y), h.mods);
 }
 
 /** `PAGE_EVENT`'s answer read back. A short one is a host's mistake, and reads as an event nobody listens to. */
 export Happened happenedOf(Answer a) {
-  if (a.bytes.len() < 12) { return Happened(0, "", 0 - 1, 0 - 1, "", 0, 0, 0, 0 - 1, 0 - 1); }
-  u8[] k = u8[].filled(a.bytes.len() - 12, 0 as u8);
-  k.copyFrom(a.bytes, 12, 0, k.len());
+  if (a.bytes.len() < 20) { return Happened(0, "", 0 - 1, 0 - 1, "", 0, 0, 0, 0 - 1, 0 - 1, 0.0); }
+  u8[] k = u8[].filled(a.bytes.len() - 20, 0 as u8);
+  k.copyFrom(a.bytes, 20, 0, k.len());
   string kind = string.fromBytes(k);
+  i64 micros = pair(getI32(a.bytes, 16), getI32(a.bytes, 12));
   return Happened(getI32(a.bytes, 0), kind, lowOf(a.n), highOf(a.n), a.text, highOf(a.m), lowOf(a.m), a.flags,
-                  getI32(a.bytes, 4), getI32(a.bytes, 8));
+                  getI32(a.bytes, 4), getI32(a.bytes, 8), (micros as~ f64) / 1000.0);
 }
 
 /** One change, as a batch carries it. */

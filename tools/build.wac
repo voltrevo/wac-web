@@ -246,10 +246,11 @@ export string programSide() {
         const events = [], eventAsks = [], files = [], fileAsks = [], frames = new Map(), values = new Map();
         let at = where, locationAsks = [], lastFrame = 0, lastValue = 0;
         const strip = (h) => h.startsWith("#") ? h.slice(1) : h;
-        const giveEvent = (id, [seq, kind, target, listener, value, x, y, mods, selStart, selEnd]) => {
-          const k = enc.encode(kind), b = new Uint8Array(12 + k.length), v = new DataView(b.buffer);
+        const giveEvent = (id, [seq, kind, target, listener, value, x, y, mods, selStart, selEnd, at]) => {
+          const k = enc.encode(kind), b = new Uint8Array(20 + k.length), v = new DataView(b.buffer);
           v.setInt32(0, seq, true); v.setInt32(4, selStart, true); v.setInt32(8, selEnd, true);
-          b.set(k, 12);
+          v.setBigInt64(12, BigInt(Math.round(at * 1000)), true);
+          b.set(k, 20);
           answer(id, 0, value, b, pair(listener, target), pair(x, y), mods);
         };
         const giveFile = (id, [ok, name, bytes, error]) => answer(id, 0, name, ok ? bytes : enc.encode(error), 0n, 0n, ok ? 0 : 1);
@@ -406,6 +407,7 @@ export string systemSide() {
       const wacServer = (answer, me) => {
         const enc = new TextEncoder();
         const NONE = new Uint8Array(0);
+        const clock = () => performance.timeOrigin + performance.now();
         let rootP = null;
         // Requests withdrawn before they were answered (`OP_DROP`): what their answer would have held is closed
         // instead of handed to a program that no longer wants it.
@@ -492,7 +494,10 @@ export string systemSide() {
           switch (op) {
             case 0: dropped.add(id); return;
             case 1: return ok(id, NONE, BigInt(Date.now()));
-            case 2: return ok(id, NONE, BigInt(Math.round(performance.now() * 1e6)));
+            // **One clock for the document and every worker**: each has its own `performance.now()`, counted from when
+            // it started, so it is counted from that start's own time — and an event stamped in the document reads the
+            // same in a program in a worker, or in a child of a desktop's.
+            case 2: return ok(id, NONE, BigInt(Math.round(clock() * 1e6)));
             case 3: return ok(id, crypto.getRandomValues(new Uint8Array(n)));
             case 6: return ok(id, NONE, BigInt(me.args.length));
             case 7: return ok(id, me.args[n] ?? NONE);
@@ -553,7 +558,7 @@ export string systemSide() {
             });
             case 12: case 48: emit(op === 48, bytes); return ok(id, NONE, 0n, 0n, 1);
             case 19: return read(id, me.stdin);
-            case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(performance.now() * 1e6))), n); return;
+            case 30: setTimeout(() => ok(id, NONE, BigInt(Math.round(clock() * 1e6))), n); return;
             case 27: return spawn(id, partsOf(bytes), n, text, Number(b), moduleOf(bytes));
             case 24: return read(id, n === 1 && me.served ? me.fsIn : handles.get(n)?.q);
             case 25: {
@@ -1194,6 +1199,20 @@ export string documentSide() {
               if (k.mods >= 0 && k.mods !== held) return false;
               return k.key.length === 1 ? k.key.toLowerCase() === ev.key.toLowerCase() : k.key === ev.key;
             });
+            // **`resize`** is the element's own size on screen, in device pixels, in `x` and `y`: once when it is
+            // listened for, and each time it changes — what a canvas is sized by to be drawn crisp.
+            if (kind === "resize") {
+              const box = !n.getBoundingClientRect && n.host ? n.host : n;
+              let seen = "";
+              new ResizeObserver(() => {
+                const r = box.getBoundingClientRect(), d = devicePixelRatio || 1;
+                const w = Math.round(r.width * d), h = Math.round(r.height * d);
+                if (`${w}x${h}` === seen) return;
+                seen = `${w}x${h}`;
+                emit(["el", ++seq, kind, id, id, String(d), w, h, 0, -1, -1, performance.timeOrigin + performance.now()]);
+              }).observe(box);
+              return;
+            }
             n.addEventListener(kind, (ev) => {
               let t = ev.target;
               // Inside a shadow root, `parentNode` stops at the root, whose host is the next node out.
@@ -1202,7 +1221,10 @@ export string documentSide() {
               const keyed = kind === "keydown" || kind === "keyup";
               if (prevent === "*" || kind === "submit" || (keyed && keyMatches(ev))) ev.preventDefault();
               const el = ev.target;
-              const value = keyed ? ev.key : (el && "value" in el ? String(el.value) : "");
+              // A wheel's value is how far it turned, in whole pixels down: a line is counted as 16, a page as 800.
+              const value = keyed ? ev.key
+                : kind === "wheel" ? String(Math.round(ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 800 : 1)))
+                : (el && "value" in el ? String(el.value) : "");
               // In the listening element's own pixels, whatever is under the pointer inside it: a bar's
               // handler gets the bar's coordinates over its title, and a desktop's the desktop's over a window.
               const [x, y] = within(n, ev);
@@ -1210,7 +1232,7 @@ export string documentSide() {
               // The caret of the text field it happened in; -1 where there is none.
               const caret = el && typeof el.selectionStart === "number";
               emit(["el", numbered(ev), kind, handleOf.get(t), id, value, x, y, mods,
-                    caret ? el.selectionStart : -1, caret ? el.selectionEnd : -1]);
+                    caret ? el.selectionStart : -1, caret ? el.selectionEnd : -1, performance.timeOrigin + ev.timeStamp]);
             });
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },
