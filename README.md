@@ -24,7 +24,7 @@ export async i32 main(Page page) {
 ```
 
 A project of your own starts from [`template/`](template/), which depends on this package by git
-(`https://git.voltrevo.com/web.git`) and builds with nothing but `wac`.
+(`https://github.com/voltrevo/wac-web.git`) and builds with nothing but `wac`.
 
 ## Components and hooks — `view.wac`
 

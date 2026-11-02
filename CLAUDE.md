@@ -20,7 +20,7 @@ wac depends on this package by git, pinned to a commit (its site, and the page e
 pushed here reaches wac until someone moves it.
 
 **References to `design/…`, `issues/…`, `spec ch…` and `packages/…` in comments name wac's
-documents and files**, at `https://git.voltrevo.com/wac.git`. They were written when this was a
+documents and files**, at `https://github.com/voltrevo/wac.git`. They were written when this was a
 directory of wac, and they are still the reasons.
 
 ## Running things
@@ -34,8 +34,12 @@ loudly, without Chromium under `~/.cache/ms-playwright`.
 
 ## Working agreements
 
-- **Pushing to `https://git.voltrevo.com/web.git` is the agent's call** once `tools/push.sh` passes,
-  as it is for wac. Nothing goes to GitHub unless the owner says so.
+- **This is wac-web: `https://git.voltrevo.com/wac-web.git`, synced by the owner to
+  `https://github.com/voltrevo/wac-web.git`** with the same commits. It was `web.git` until 2026-11-02; the package
+  is still imported as `web`. **Pushing to git.voltrevo.com is the agent's call** once `tools/push.sh` passes, as it
+  is for wac. Nothing goes to GitHub unless the owner says so.
+- **Every pin names GitHub**; run `sh tools/use-mirror.sh` once per machine so `git` fetches them from
+  git.voltrevo.com, which has the commits first.
 - **wac's rule holds here: there are no users and no legacy.** When nothing needs a thing, delete it —
   not deprecate it, not keep it behind a flag. If you find yourself proposing to keep something, say
   what would break, and check that it is not just a test you could edit.

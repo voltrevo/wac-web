@@ -2,7 +2,7 @@
 // through the `wac` command and nothing else.
 //
 // **The dependency is this checkout, put where `wac update` would put it.** The template maps `web` and
-// `webbuild` to this repository on git.voltrevo.com, and fetching is the network — so instead of fetching,
+// `webbuild` to this repository on GitHub, and fetching is the network — so instead of fetching,
 // the test writes the cache a fetch leaves behind (`$WAC_HOME/cache/git/<repo>/<commit>`, a plain checkout)
 // from the working tree, and a `wac.lock` naming that commit. What is under test is everything after the
 // fetch: resolving the two packages through the manifest and the lock, the builder run from the project,
@@ -14,7 +14,7 @@
 // to either in wac shows up here as a template that no longer resolves.
 import { ROOT, WAC } from "./harness.ts";
 
-const GIT = "https://git.voltrevo.com/web.git";
+const GIT = "https://github.com/voltrevo/wac-web.git";
 /** A commit no fetch made: the cache entry is the test's own, so it cannot collide with a real one. */
 const COMMIT = "0000000000000000000000000000000000000001";
 

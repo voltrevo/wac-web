@@ -8,9 +8,10 @@ A page written entirely in wac: `src/app.wac` is the application, and `wac task 
     wac task serve      # http://localhost:8080
     wac task test       # the application, driven without a browser
 
-**Where `wac update` is refused** — git.voltrevo.com answers wac's own fetcher 401, since it has no credentials
-there and `git` does — put the locked commit in wac's package cache with `git` instead: wac's
-`tools/fill-cache.sh`, copied into this project's `tools/`, reads `wac.lock` and does it.
+**Fetching through a mirror** — `git` set to fetch GitHub's URLs from elsewhere (wac-web's
+`tools/use-mirror.sh`), which `wac update`'s own fetcher does not follow — put the locked commit in wac's package
+cache with `git` instead: wac's `tools/fill-cache.sh`, copied into this project's `tools/`, reads `wac.lock` and does
+it.
 
 ## How a page works
 
@@ -40,7 +41,7 @@ export async i32 main(Page page) {
   is named with `ref={r}` (`Ref r = ui.ref()`) and drawn from an effect with `r.element()!.pixels(w, h,
   rgba)`.
 
-The whole of `Page` is in the README of the `web` package, `https://git.voltrevo.com/web.git`, which
+The whole of `Page` is in the README of the `web` package, `https://github.com/voltrevo/wac-web.git`, which
 `wac update` puts in `$WAC_HOME/cache/git/`.
 
 ## What is in this directory
