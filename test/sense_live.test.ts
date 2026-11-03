@@ -56,14 +56,19 @@ for (const mode of [[], ["--in-page"]]) {
         const page = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2, hasTouch: true });
         await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
         const text = (id: string) => `(document.getElementById(${JSON.stringify(id)})?.textContent ?? "")`;
-        const size = async () =>
-          await page.evaluate(`(() => { const r = document.getElementById("box").getBoundingClientRect();
-                                        return Math.round(r.width * 2) + "x" + Math.round(r.height * 2); })()`) as string;
         await waitInPage(page, `document.getElementById("box") !== null`, null, { timeout: 30_000 });
-        await waitInPage(page, `${text("size")} === ${JSON.stringify(await size())}`, null, { timeout: 10_000 });
+        // **The box measured on every poll, not once before the wait.** Taken once, the expected size was
+        // whatever the layout was at that instant; when it was still settling, the page went on to report the
+        // size it settled at, and the wait held out for one that no longer existed — this case timed out
+        // waiting for "1568x350" in two runs of five, on the page's own thread.
+        const sizeNow = `(() => { const r = document.getElementById("box").getBoundingClientRect();
+                                  return Math.round(r.width * 2) + "x" + Math.round(r.height * 2); })()`;
+        await waitInPage(page, `${text("size")} === ${sizeNow}`, null, { timeout: 10_000 });
 
+        // And after a resize, the new size: the page's report agrees with the box, and the box is not the size it was.
+        const before = await page.evaluate(sizeNow) as string;
         await page.setViewportSize({ width: 500, height: 600 });
-        await waitInPage(page, `${text("size")} === ${JSON.stringify(await size())}`, null, { timeout: 10_000 });
+        await waitInPage(page, `${text("size")} === ${sizeNow} && ${sizeNow} !== ${JSON.stringify(before)}`, null, { timeout: 10_000 });
 
         const over = await page.evaluate(`(() => { const r = document.getElementById("wheel").getBoundingClientRect();
                                                     return [r.left + r.width / 2, r.top + r.height / 2]; })()`) as number[];
