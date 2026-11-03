@@ -267,11 +267,12 @@ export string programSide() {
         const events = [], eventAsks = [], files = [], fileAsks = [], frames = new Map(), values = new Map();
         let at = where, locationAsks = [], lastFrame = 0, lastValue = 0;
         const strip = (h) => h.startsWith("#") ? h.slice(1) : h;
-        const giveEvent = (id, [seq, kind, target, listener, value, x, y, mods, selStart, selEnd, at]) => {
-          const k = enc.encode(kind), b = new Uint8Array(20 + k.length), v = new DataView(b.buffer);
+        const giveEvent = (id, [seq, kind, target, listener, value, x, y, mods, selStart, selEnd, at, pointer]) => {
+          const k = enc.encode(kind), b = new Uint8Array(24 + k.length), v = new DataView(b.buffer);
           v.setInt32(0, seq, true); v.setInt32(4, selStart, true); v.setInt32(8, selEnd, true);
           v.setBigInt64(12, BigInt(Math.round(at * 1000)), true);
-          b.set(k, 20);
+          v.setInt32(20, pointer ?? -1, true);
+          b.set(k, 24);
           answer(id, 0, value, b, pair(listener, target), pair(x, y), mods);
         };
         const giveFile = (id, [ok, name, bytes, error]) => answer(id, 0, name, ok ? bytes : enc.encode(error), 0n, 0n, ok ? 0 : 1);
@@ -351,15 +352,19 @@ export string programSide() {
             (e) => answer(id, 5, path + ": " + String(e?.message ?? e), NONE, 0n, 0n, 0));
         };
         const allows = (versions) => {
-          // `^1`, `^1.0`, `^1.0.0` or `1.0.0`: what a 1.0.0 capability here allows.
-          const [major, minor, patch] = (versions.startsWith("^") ? versions.slice(1) : versions).split(".");
-          return versions.startsWith("^") ? major === "1" && (minor ?? "0") === "0" && (patch ?? "0") === "0" : versions === "1.0.0";
+          // `^1`, `^1.0`, `^1.1.0` or `1.1.0`: what the 1.1.0 capability here allows — any 1.x at or below it, or it.
+          const here = [1, 1, 0], exact = !versions.startsWith("^");
+          const want = (exact ? versions : versions.slice(1)).split(".").map((n) => Number(n || 0));
+          while (want.length < 3) want.push(0);
+          if (exact) return want.join(".") === here.join(".");
+          return want[0] === here[0] && (want[1] < here[1] || (want[1] === here[1] && want[2] <= here[2]));
         };
         const request = (op, id, a, b, text, bytes) => {
           if (op === 68 && text === "wac.site") {
             if (siteDir === null) return answer(id, 9, "a page opened from a file has no site", NONE, 0n, 0n, 0);
-            if (!allows(dec.decode(bytes))) return answer(id, 9, "wac.site here is 1.0.0, which " + dec.decode(bytes) + " does not allow", NONE, 0n, 0n, 0);
-            return answer(id, 0, "1.0.0", NONE, BigInt(SITE), 1n, 0);
+            if (!allows(dec.decode(bytes))) return answer(id, 9, "wac.site here is 1.1.0, which " + dec.decode(bytes) + " does not allow", NONE, 0n, 0n, 0);
+            // Where the page is, its `#` part left out: the address to give someone to open it too.
+            return answer(id, 0, "1.1.0", enc.encode(site.split("#")[0]), BigInt(SITE), 1n, 0);
           }
           if (op === SITE) return siteGet(id, text);
           if (op === 68 && text === "wac.page") {
@@ -1219,7 +1224,13 @@ export string documentSide() {
             // `prevent` names keys: `Tab` matches with any modifiers held, and `Ctrl+s` only with exactly
             // Ctrl (of Ctrl, Alt, Shift and Meta) — so a page can take Ctrl+S without taking every `s`. A
             // single letter matches either case, since Shift turns `s` into `S`.
-            const keys = prevent === "" || prevent === "*" ? [] : prevent.split(" ").filter((k) => k !== "").map((k) => {
+            // Besides keys, `prevent` may say `*` — every default, however it is spelled — and `capture`: a pointer
+            // pressed down on this element stays this element's until it lifts, its moves and its lifting heard here
+            // even off the element — a finger held on a button and slid off it still lets go of the button.
+            const words = prevent.split(" ").filter((k) => k !== "");
+            const everything = prevent === "*" || words.includes("*");
+            const capture = words.includes("capture");
+            const keys = everything ? [] : words.filter((k) => k !== "capture").map((k) => {
               const parts = k.split("+");
               if (parts.length === 1 || k === "+") return { key: k, mods: -1 };
               const bit = { Shift: 1, Ctrl: 2, Alt: 4, Meta: 8 };
@@ -1242,7 +1253,7 @@ export string documentSide() {
                 const w = Math.round(r.width * d), h = Math.round(r.height * d);
                 if (`${w}x${h}` === seen) return;
                 seen = `${w}x${h}`;
-                emit(["el", ++seq, kind, id, id, String(d), w, h, 0, -1, -1, performance.timeOrigin + performance.now()]);
+                emit(["el", ++seq, kind, id, id, String(d), w, h, 0, -1, -1, performance.timeOrigin + performance.now(), -1]);
               }).observe(box);
               return;
             }
@@ -1252,7 +1263,8 @@ export string documentSide() {
               while (t && t !== n && !handleOf.has(t)) t = t.parentNode ?? t.host;
               if (!t || !handleOf.has(t)) return;
               const keyed = kind === "keydown" || kind === "keyup";
-              if (prevent === "*" || kind === "submit" || (keyed && keyMatches(ev))) ev.preventDefault();
+              if (everything || kind === "submit" || (keyed && keyMatches(ev))) ev.preventDefault();
+              if (capture && kind === "pointerdown" && n.setPointerCapture) { try { n.setPointerCapture(ev.pointerId); } catch {} }
               const el = ev.target;
               // A wheel's value is how far it turned, in whole pixels down: a line is counted as 16, a page as 800.
               const value = keyed ? ev.key
@@ -1265,7 +1277,8 @@ export string documentSide() {
               // The caret of the text field it happened in; -1 where there is none.
               const caret = el && typeof el.selectionStart === "number";
               emit(["el", numbered(ev), kind, handleOf.get(t), id, value, x, y, mods,
-                    caret ? el.selectionStart : -1, caret ? el.selectionEnd : -1, performance.timeOrigin + ev.timeStamp]);
+                    caret ? el.selectionStart : -1, caret ? el.selectionEnd : -1, performance.timeOrigin + ev.timeStamp,
+                    typeof ev.pointerId === "number" ? ev.pointerId : -1]);
             });
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },

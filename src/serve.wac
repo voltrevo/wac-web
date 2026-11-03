@@ -413,7 +413,7 @@ export struct PageServer {
     i32? target = this.childOf.get(ev.target.id);
     this.seq++;
     Happened h = Happened(this.seq, ev.kind, target ?? listener, listener, ev.value, ev.x, ev.y, ev.mods, ev.selStart,
-                          ev.selEnd, ev.at);
+                          ev.selEnd, ev.at, ev.pointer);
     Ticket<Answer>? t = this.asking.pop();
     if (t is not null) {
       t!.resolve(eventAnswer(h));

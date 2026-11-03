@@ -37,7 +37,7 @@ A project of your own starts from [`template/`](template/), which depends on thi
 | `ui.after(ms, f)`, `ui.every(ms, f)` | timers that end with the component, each answering its cancel |
 | `Ref r = ui.ref()`, `ref={r}` | a name for an element the component draws: `r.element()` is its handle once the render that made it is applied — in an effect, or a handler |
 | `key={…}` | which instance or element a node is, among its siblings |
-| `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents, and `prevent="Ctrl+s"` prevents a key only with exactly those modifiers held |
+| `onclick={(ElementEvent e) => …}` and the other `on…` attributes | handlers; `prevent="Tab ArrowUp"` beside one says which defaults the document prevents, and `prevent="Ctrl+s"` prevents a key only with exactly those modifiers held; `prevent="* capture"` keeps each pointer pressed down on the element the element's until it lifts, and a pointer event's `pointer` says which — so two fingers are followed apart, and one slid off a button still lets go of it (`onpointercancel` when the browser takes a touch away) |
 | `e.at`; `onwheel`'s `e.value`; `element.on("resize", …)` | when an event happened, by `page.now()`'s clock — `page.now() - e.at` is how long it took to arrive; how far a wheel turned, in pixels down; an element's size on screen in device pixels, in `e.x` and `e.y`, as it changes |
 
 **Only what changed renders.** A `set` marks the component that made the cell; a child whose attributes
@@ -156,7 +156,7 @@ element is gone — the window closed — `server.close()` answers what the page
 
 ## The site a page came from — `wac.site`
 
-`Site.of(sys)` is the site the page was served from, and `site.get(path)` a GET of a path under the page's folder —
+`Site.of(sys)` is the site the page was served from — `site.address` where, to give someone to open it — and `site.get(path)` a GET of a path under the page's folder —
 the browser's cache doing the caching, nothing copied anywhere. `siteFiles(site)` is the site as files, read-only:
 a read is a GET, and a listing or a size comes from the site's `index.json`, which its build writes with
 

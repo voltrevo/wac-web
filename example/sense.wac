@@ -1,5 +1,6 @@
 // What a page can tell about the person and the screen: its own size on screen, which way the wheel turned, how
-// long a key took to reach it — and where in the browser's history it is, which it can add to and Back returns from. What `test/sense_live.test.ts` builds and drives in a browser.
+// long a key took to reach it, where in the browser's history it is — which it can add to and Back returns from — and
+// two fingers at once on a pad that keeps each until it lifts. What `test/sense_live.test.ts` builds and drives in a browser.
 
 import { Element, ElementEvent, Listen, Page } from "../src/page.wac";
 
@@ -31,6 +32,15 @@ export async i32 main(Page page) {
   deeper.attr("id", "deeper");
   deeper.text("Deeper");
   deeper.on("click", Listen.none(), (ElementEvent e) => { page.go("deeper", true); });
+  // Each finger by its pointer: pressed, and lifted — heard here even when it lifts somewhere else (`capture`).
+  Element pad = box.append("div");
+  pad.attr("id", "pad");
+  pad.attr("style", "width: 240px; height: 120px; background: #dde; touch-action: none");
+  Element fingers = box.append("p");
+  fingers.attr("id", "fingers");
+  string felt = "";
+  pad.on("pointerdown", Listen.keys("* capture"), (ElementEvent e) => { felt = felt + "down \{e.pointer};"; fingers.text(felt); });
+  pad.on("pointerup", Listen.keys("* capture"), (ElementEvent e) => { felt = felt + "up \{e.pointer};"; fingers.text(felt); });
   i32 turned = 0;
   box.on("resize", Listen.none(), (ElementEvent e) => { size.text("\{e.x}x\{e.y}"); });
   box.on("wheel", Listen.all(), (ElementEvent e) => {

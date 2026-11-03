@@ -22,7 +22,8 @@ async string read(Sys sys) {
       string[] all = names.ok()!;
       string listed = "";
       for (i32 i = 0; i < all.len(); i++) { listed = listed + (i > 0 ? "," : "") + all[i]; }
-      return listed + "|" + string.fromBytes(note.ok()!) + "|" + string.fromBytes(streamed.ok()!) + "|" + (written.isOk() ? "written" : "read-only");
+      return listed + "|" + string.fromBytes(note.ok()!) + "|" + string.fromBytes(streamed.ok()!) + "|" + (written.isOk() ? "written" : "read-only")
+           + "|" + site.address;
     }
     Err(why): { return "no site: " + why; }
   }

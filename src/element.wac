@@ -39,6 +39,11 @@ export struct Listen {
    */
   string prevent;
 
+  /**
+   * `prevent`: keys whose defaults are prevented — `"Tab Ctrl+s"` — or `"*"`, every default; and `capture`, among
+   * them, keeps a pointer pressed down on the element the element's until it lifts: a finger held on a button and
+   * slid off it is still heard lifting, or being cancelled, there.
+   */
   Listen none() { return Listen(""); }
   Listen all() { return Listen("*"); }
   Listen keys(string names) { return Listen(names); }
@@ -80,6 +85,12 @@ export struct ElementEvent {
    * key takes to show.
    */
   f64 at;
+  /**
+   * **Which pointer** — the mouse, a pen, or one finger of several — for a pointer event, so a page can follow two
+   * fingers at once; -1 for any other event. The browser's `pointerId`: the same for one finger from the moment it
+   * touches to the moment it lifts, and not after.
+   */
+  i32 pointer;
 }
 
 /** Every live handle, by id, and what the program has seen. */
@@ -119,7 +130,7 @@ export struct Elements {
         return;
       }
       Happened h = happenedOf(t.value());
-      es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd, h.at);
+      es.deliver(h.seq, h.kind, h.target, h.listener, h.value, h.x, h.y, h.mods, h.selStart, h.selEnd, h.at, h.pointer);
       es.follow();
     });
   }
@@ -137,13 +148,13 @@ export struct Elements {
    * that is gone.
    */
   void deliver(this, i32 seq, string kind, i32 targetId, i32 listenerId, string value, i32 x, i32 y, i32 mods,
-               i32 selStart, i32 selEnd, f64 at) {
+               i32 selStart, i32 selEnd, f64 at, i32 pointer) {
     if (seq > this.seen) { this.seen = seq; }
     if (listenerId < 0 || listenerId >= this.byId.len() || targetId < 0 || targetId >= this.byId.len()) { return; }
     Element? l = this.byId.get(listenerId);
     Element? t = this.byId.get(targetId);
     if (l is null || t is null) { return; }
-    l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd, at));
+    l!.heard(ElementEvent(kind, t!, value, x, y, mods, selStart, selEnd, at, pointer));
   }
 }
 

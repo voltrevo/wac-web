@@ -48,8 +48,10 @@ Deno.test({
         await waitInPage(page, "(() => { const e = document.getElementById('said'); return e !== null && e.textContent !== '…'; })()", null, { timeout: 30_000 });
         return await page.evaluate("document.getElementById('said').textContent") as string;
       };
-      assertEquals((await said(`http://127.0.0.1:${port}/`)).split("|").map((x, i) => i === 0 ? x.split(",").sort().join(",") : x),
-                   ["note.txt,other.txt", "from the site", "streamed", "read-only"], "listed from the index, read by a GET, streamed, and not written");
+      // And where it is: the address it was opened at, its `#` part left out.
+      assertEquals((await said(`http://127.0.0.1:${port}/#somewhere`)).split("|").map((x, i) => i === 0 ? x.split(",").sort().join(",") : x),
+                   ["note.txt,other.txt", "from the site", "streamed", "read-only", `http://127.0.0.1:${port}/`],
+                   "listed from the index, read by a GET, streamed, not written, and where it is");
       assertEquals(await said(`file://${dir}/index.html`), "no site: a page opened from a file has no site", "from a file");
     } finally {
       await browser?.close();

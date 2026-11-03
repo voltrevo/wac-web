@@ -53,7 +53,7 @@ for (const mode of [[], ["--in-page"]]) {
         if (!index.includes("interactive-widget=resizes-content, viewport-fit=cover")) throw new Error("the viewport of an --edge page");
         const port = (http = serve(dir)).port;
         browser = await chromium.launch({ args: ["--no-proxy-server"] });
-        const page = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
+        const page = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2, hasTouch: true });
         await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
         const text = (id: string) => `(document.getElementById(${JSON.stringify(id)})?.textContent ?? "")`;
         const size = async () =>
@@ -78,6 +78,23 @@ for (const mode of [[], ["--in-page"]]) {
         await waitInPage(page, `${text("key")} !== ""`, null, { timeout: 10_000 });
         const key = await page.evaluate(text("key")) as string;
         if (key !== "ArrowLeft on time") throw new Error(`the key, and when: ${key}`);
+
+        // Two fingers on the pad at once, each its own pointer; one slides off before it lifts, and is heard lifting.
+        const pad = await page.evaluate(`(() => { const r = document.getElementById("pad").getBoundingClientRect();
+                                                   return [r.left, r.top]; })()`) as number[];
+        const cdp = await page.context().newCDPSession(page);
+        const at = (x: number, y: number, id: number) => ({ x: pad[0] + x, y: pad[1] + y, id });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [at(30, 60, 1)] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [at(30, 60, 1), at(200, 60, 2)] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [at(30, 400, 1), at(200, 60, 2)] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [at(200, 60, 2)] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await waitInPage(page, `(${text("fingers")}.match(/;/g) ?? []).length === 4`, null, { timeout: 10_000 });
+        const felt = await page.evaluate(text("fingers")) as string;
+        const m = felt.match(/^down (\d+);down (\d+);up (\d+);up (\d+);$/);
+        if (!m || m[1] === m[2] || [m[3], m[4]].sort().join() !== [m[1], m[2]].sort().join()) {
+          throw new Error(`two fingers, each lifted, the one slid off too: ${felt}`);
+        }
 
         // A place added to the history: the program hears it, the address shows it, and the browser's Back leaves it.
         await page.click("#deeper");

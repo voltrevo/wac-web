@@ -164,9 +164,18 @@ export struct TestDoc {
   /** An event, as the document would say it: the oldest request for one hears it. None waiting, and it is lost. */
   void event(this, i32 seq, string kind, i32 target, i32 listener, string value, i32 x, i32 y, i32 mods,
              i32 selStart, i32 selEnd) {
+    this.told(Happened(seq, kind, target, listener, value, x, y, mods, selStart, selEnd, this.now, 0 - 1));
+  }
+
+  /** A pointer event, as the document would say it: pointer `pointer` — one finger of several — at (`x`, `y`). */
+  void pointerEvent(this, i32 seq, string kind, i32 target, i32 listener, i32 x, i32 y, i32 pointer) {
+    this.told(Happened(seq, kind, target, listener, "", x, y, 0, 0 - 1, 0 - 1, this.now, pointer));
+  }
+
+  void told(this, Happened h) {
     if (this.eventAsks.len() == 0) { return; }
     i32 id = this.eventAsks.remove(0);
-    this.answer(id, eventAnswer(Happened(seq, kind, target, listener, value, x, y, mods, selStart, selEnd, this.now)));
+    this.answer(id, eventAnswer(h));
   }
 
   /** Move the clock on by `ms`, waking each sleep that falls due, earliest first. */

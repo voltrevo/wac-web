@@ -463,6 +463,34 @@ export string test_a_page_goes_somewhere_and_back_returns_it() {
   return t.report();
 }
 
+/** **Two fingers at once are two pointers**: each pointer event says which, so a page can follow both. */
+export string test_each_pointer_event_says_which_pointer() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = doc.page();
+  schedule page.take;
+  Element pad = page.root().append("div");
+  string heard = "";
+  pad.on("pointerdown", Listen.keys("* capture"), (ElementEvent e) => { heard = heard + "down \{e.pointer};"; });
+  pad.on("pointerup", Listen.keys("* capture"), (ElementEvent e) => { heard = heard + "up \{e.pointer};"; });
+  pad.on("pointercancel", Listen.keys("* capture"), (ElementEvent e) => { heard = heard + "cancel \{e.pointer};"; });
+  pad.on("click", Listen.none(), (ElementEvent e) => { heard = heard + "click \{e.pointer};"; });
+  page.turn();
+  t.isTrue(doc.said.indexOf("listen \{pad.id} pointerdown") >= 0, "listened for: " + doc.said);
+  doc.pointerEvent(1, "pointerdown", pad.id, pad.id, 10, 10, 7);
+  page.turn();
+  doc.pointerEvent(2, "pointerdown", pad.id, pad.id, 50, 10, 9);
+  page.turn();
+  doc.pointerEvent(3, "pointerup", pad.id, pad.id, 10, 10, 7);
+  page.turn();
+  doc.pointerEvent(4, "pointercancel", pad.id, pad.id, 50, 10, 9);
+  page.turn();
+  doc.event(5, "click", pad.id, pad.id, "", 0, 0, 0, 0 - 1, 0 - 1);
+  page.turn();
+  t.eqStr(heard, "down 7;down 9;up 7;cancel 9;click -1;", "each pointer by its own number, and an event that is no pointer's -1");
+  return t.report();
+}
+
 export string test_a_location_the_host_answers_at_once_is_where_the_page_starts() {
   Check t = Check.create();
   // The browser's host answers the page's first request for its location inside that request, as this one does

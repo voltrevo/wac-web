@@ -15,7 +15,7 @@ import { Answer, FAULT_NONE, FileOps, Files, HostFault, Input, IsDir, LookFault,
 import { Read, Result, Ticket, Vec } from "core";
 
 export string SITE_CAPABILITY() { return "wac.site"; }
-export string SITE_VERSION() { return "1.0.0"; }
+export string SITE_VERSION() { return "1.1.0"; }
 
 /** `text` a path under the site's root → `bytes` what is there; a fault when there is nothing, or no site. */
 export static i32 SITE_GET = 0;
@@ -26,12 +26,17 @@ export static i32 SITE_COUNT = 1;
 export struct Site {
   Sys sys;
   i32 base;
+  /**
+   * **Where the site is**: the address the page was served from, without its `#` part — what to give someone to open
+   * the same page — or "" from a host that does not say (before `wac.site` 1.1.0).
+   */
+  string address;
 
   /** The site, if the program's host has one; `Err` says why not — a page opened from a file has none. */
   async Result<Site, string> of(Sys sys) {
     Answer found = await ask(sys.host, OP_CAPABILITY(), 0 as i64, 0 as i64, SITE_CAPABILITY(), "^1".toBytes());
     if (found.fault != FAULT_NONE()) { return Result.Err(found.text); }
-    return Result.Ok(Site(sys, found.n as~ i32));
+    return Result.Ok(Site(sys, found.n as~ i32, string.fromBytes(found.bytes)));
   }
 
   /** What is at `path` on the site, or why not. */
