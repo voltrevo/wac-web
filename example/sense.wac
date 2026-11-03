@@ -1,6 +1,7 @@
 // What a page can tell about the person and the screen: its own size on screen, which way the wheel turned, how
 // long a key took to reach it, where in the browser's history it is — which it can add to and Back returns from — and
-// two fingers at once on a pad that keeps each until it lifts; and a canvas it draws in its own worker. What `test/sense_live.test.ts` builds and drives in a browser.
+// two fingers at once on a pad that keeps each until it lifts; a canvas it draws in its own worker; and the whole of it
+// filling the screen when asked, and saying so. What `test/sense_live.test.ts` builds and drives in a browser.
 
 import { Element, ElementEvent, Listen, Page } from "../src/page.wac";
 
@@ -50,6 +51,19 @@ export async i32 main(Page page) {
     red[i * 4 + 2] = 0 as u8;
   }
   drawn.pixels(4, 2, red);
+  // Full screen asked for, and what the browser did about it heard: the person may leave it without asking.
+  Element full = box.append("button");
+  full.attr("id", "full");
+  full.text("Full screen");
+  Element filled = box.append("p");
+  filled.attr("id", "filled");
+  filled.text("not full");
+  bool isFull = false;
+  full.on("click", Listen.none(), (ElementEvent e) => { box.fullScreen(!isFull); });
+  box.on("fullscreenchange", Listen.none(), (ElementEvent e) => {
+    isFull = e.value == "1";
+    filled.text(isFull ? "full" : "not full");
+  });
   i32 turned = 0;
   box.on("resize", Listen.none(), (ElementEvent e) => { size.text("\{e.x}x\{e.y}"); });
   box.on("wheel", Listen.all(), (ElementEvent e) => {

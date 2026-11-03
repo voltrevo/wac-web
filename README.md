@@ -52,10 +52,13 @@ view drew run the program on and render. `test/wac/view_test.wac` and `template/
 
 `page.root()` is an `Element`: the authority over that element and everything under it, and the only way
 to reach it. `append(tag)`, `appendText(s)`, `text(s)`, `attr(name, value)`, `prop(name, value)`,
-`move(before)`, `remove()`, `focus()`, `on(kind, Listen, handler)` or `listen(kind, Listen)` and
+`move(before)`, `remove()`, `focus()`, `fullScreen(on)`, `on(kind, Listen, handler)` or `listen(kind, Listen)` and
 `await next()`, and `await value()`. The view is built on it; a program may use it directly for a corner
 of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses `on…` names and
-`javascript:` URLs, and `append` refuses the elements that run or load something on their own.
+`javascript:` URLs, and `append` refuses the elements that run or load something on their own. `fullScreen(true)`
+asks for the element to fill the screen — the browser's full screen, which a browser allows only just after a tap or a
+key, or, where there is none (an iPhone's browser), the window — and `fullscreenchange` says what happened, `"1"` or
+`""`, the person leaving it with Back or Escape included.
 
 ## What belongs to the page
 
@@ -156,7 +159,10 @@ served into that element's shadow root, `element.shadow()`: its stylesheets then
 nowhere else, in neither direction, so the page around it cannot restyle what it draws, nor it the page around
 it. The page's own stylesheet names its variables on `:host` as well as `:root`, which matches nothing there. When the
 element is gone — the window closed — `server.close()` answers what the page waits for "closed", and the page's
-`page.closed()` settles: a program with several windows forgets that one.
+`page.closed()` settles: a program with several windows forgets that one. **Full screen is never the served page's to take**: its
+`element.fullScreen(on)` asks the server, which asks whoever set `server.whenFullScreen(ask)` and refuses without
+one, and what was decided reaches the page's `fullscreenchange` listeners by `server.fullScreened(on)` — so a desktop
+decides when a window fills the screen, and keeps the way out of it its own.
 
 ## The site a page came from — `wac.site`
 

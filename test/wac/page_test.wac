@@ -437,6 +437,21 @@ export string test_a_batched_page_sends_what_it_holds_before_it_asks() {
   return t.report();
 }
 
+/** **Full screen is asked for**, by the element to fill it, and left the same way: the host decides, and says. */
+export string test_an_element_asks_to_fill_the_screen_and_to_leave_it() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = doc.page();
+  schedule page.take;
+  Element box = page.root().append("div");
+  box.fullScreen(true);
+  page.turn();
+  box.fullScreen(false);
+  page.turn();
+  t.isTrue(doc.said.indexOf("fullscreen \{box.id} on\nfullscreen \{box.id} off\n") >= 0, "asked, then left: " + doc.said);
+  return t.report();
+}
+
 /**
  * **A page goes somewhere new**: added to the history, it hears where it went as any new location, and Back returns
  * it to where it was; in place of where it is, Back passes it by.

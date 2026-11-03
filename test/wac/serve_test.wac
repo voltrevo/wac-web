@@ -7,7 +7,7 @@
 import { Check } from "./check.wac";
 import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_GO, PAGE_SURFACE, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, PAGE_WINDOW, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_GO, PAGE_SURFACE, PAGE_LOCATION, Desktop, Element, ElementEvent, Listen, Node, PAGE_COUNT, PAGE_WINDOW, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
          PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
 /** Where the child's host numbers `wac.page`, and `wac.desktop`. */
@@ -144,6 +144,35 @@ export string test_a_child_draws_in_its_window_and_hears_what_happens_there() {
   r.doc.fire(up, "click", "");
   t.eqStr(r.doc.shown(r.window.id), "Clicks: 1 +1", "a click there ran the child's handler, and it drew again");
   t.eqI32(r.server.refused.len(), 0, "nothing was refused: " + (r.server.refused.len() > 0 ? r.server.refused.get(0) : ""));
+  return t.report();
+}
+
+export string test_a_child_asks_whoever_serves_it_for_full_screen_and_hears_what_was_decided() {
+  Check t = Check.create();
+  Rig r = rig();
+  schedule r.child.take;
+  Element box = r.child.root().append("div");
+  string heard = "";
+  box.on("fullscreenchange", Listen.none(), (ElementEvent e) => { heard = heard + "[" + e.value + "]"; });
+  box.fullScreen(true);
+  r.child.turn();
+  r.desk.turn();
+  t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("fullscreen") >= 0, "refused, with no one to ask");
+  r.server.refused.clear();
+  string asked = "";
+  r.server.whenFullScreen((Element e, bool on) => { asked = asked + (e.tag == "div" ? "div " : "? ") + (on ? "on;" : "off;"); });
+  box.fullScreen(true);
+  r.child.turn();
+  r.desk.turn();
+  t.eqStr(asked, "div on;", "asked of whoever serves it, with the element it asked for");
+  t.eqI32(r.doc.said.indexOf("fullscreen"), 0 - 1, "and not of the document, nor listened for there: " + r.doc.said);
+  r.server.fullScreened(true);
+  r.child.turn();
+  t.eqStr(heard, "[1]", "told it is full screen, as its own element's fullscreenchange");
+  r.server.fullScreened(false);
+  r.child.turn();
+  t.eqStr(heard, "[1][]", "and told when it no longer is — the person leaving it, say — without asking");
+  t.eqI32(r.server.refused.len(), 0, "nothing else refused");
   return t.report();
 }
 

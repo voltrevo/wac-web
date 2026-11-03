@@ -30,7 +30,7 @@ import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
-export string PAGE_VERSION() { return "1.5.0"; }
+export string PAGE_VERSION() { return "1.6.0"; }
 
 /** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
 export static i32 PAGE_MAKE = 0;
@@ -116,8 +116,16 @@ export static i32 PAGE_GO = 27;
  * and pixels sent for it the usual way are not drawn.
  */
 export static i32 PAGE_SURFACE = 28;
+/**
+ * `a` an element's handle, `b` 1 for full screen and 0 to leave it: **asked, not done** — the host decides. A browser
+ * page fills the screen with the element where the browser lets it, which is only just after a tap or a key, and fills
+ * the window with it where the browser has no full screen; a server forwarding a child's page asks whoever it serves
+ * (`PageServer.whenFullScreen`), and refuses without one. Either way the element's `fullscreenchange` listeners hear
+ * what happened, and when — the person leaving it with Back or Escape too — `"1"` while full and `""` once not.
+ */
+export static i32 PAGE_FULLSCREEN = 29;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 29;
+export static i32 PAGE_COUNT = 30;
 
 /**
  * **A surface: a canvas a worker draws itself**, rather than sending every frame's pixels to the document — and, in
@@ -349,6 +357,7 @@ export struct PageLine {
   void typeText(this, i32 id, string text, i32 seen) { this.tell(PAGE_TYPE_TEXT, pair(seen, id), 0 as i64, text, u8[]()); }
   void title(this, string t) { this.tell(PAGE_TITLE, 0 as i64, 0 as i64, t, u8[]()); }
   void go(this, string where, bool push) { this.tell(PAGE_GO, (push ? 1 : 0) as i64, 0 as i64, where, u8[]()); }
+  void fullScreen(this, i32 id, bool on) { this.tell(PAGE_FULLSCREEN, id as i64, (on ? 1 : 0) as i64, "", u8[]()); }
   void surface(this, i32 id, i32 child, i32 key) { this.tell(PAGE_SURFACE, id as i64, pair(child, key), "", u8[]()); }
   void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
   void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }

@@ -13,6 +13,10 @@
 // elements heard, a frame by this page's next frame, a value by the element's, a file by what the desktop hands it
 // (`hand`). Its location never changes — a window has no address bar.
 //
+// **Full screen is asked of whoever this serves, never done by the child** (`whenFullScreen`): the child's element
+// cannot fill a screen its window is inside of, and a desktop, not a program, decides when there is one to fill and how
+// the person leaves it. The child hears the answer as its own element's `fullscreenchange` (`fullScreened`).
+//
 // **Its sounds are this page's**, made and played through it under this side's numbers, and they stop when the
 // window closes: a closed window is not heard.
 
@@ -22,7 +26,7 @@ import { Element, ElementEvent, Listen, whyNotAttr, whyNotTag } from "./element.
 import { Page, Sound, Voice } from "./page.wac";
 import { Change, Happened, PAGE_ATTR, PAGE_BATCH, PAGE_CAPABILITY, PAGE_COUNT, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE,
          PAGE_FOCUS, PAGE_FRAME, PAGE_LISTEN, PAGE_LOCATION, PAGE_LOG, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_MOVE,
-         PAGE_GAIN, PAGE_GO, PAGE_PIXELS, PAGE_SURFACE, PAGE_PIXELS_IN, PAGE_PLAY, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_SOUND, PAGE_STOP, PAGE_TEXT, PAGE_TITLE,
+         PAGE_FULLSCREEN, PAGE_GAIN, PAGE_GO, PAGE_PIXELS, PAGE_SURFACE, PAGE_PIXELS_IN, PAGE_PLAY, PAGE_PROP, PAGE_REMOVE, PAGE_SCROLL, PAGE_SELECT, PAGE_SOUND, PAGE_STOP, PAGE_TEXT, PAGE_TITLE,
          PAGE_TYPE_TEXT, PAGE_VALUE, PAGE_VERSION, batchOf, eventAnswer, getF64, highOf, lowOf, quadAt, when } from "./line.wac";
 
 /** What a closed page's requests are answered. */
@@ -62,6 +66,10 @@ export struct PageServer {
   f64 loudness;
   /** The child, by the handle its parent spawned it as — what its canvases are handed to (`PAGE_SURFACE`) — or -1. */
   i32 child;
+  /** Told the child's element and whether it asked to fill the screen or to leave it (`whenFullScreen`); none refuses. */
+  fn<void(Element, bool)>? asksFull;
+  /** The child's elements listening for `fullscreenchange`, by its numbers: told by `fullScreened`, not the document. */
+  Vec<i32> hearFull;
 
   /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
   PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
@@ -72,7 +80,8 @@ export struct PageServer {
     Queue<Answer> handed;
     Queue<Ticket<Answer>> wanting;
     return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
-                      Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), 1.0, 0 - 1);
+                      Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), 1.0, 0 - 1,
+                      null, Vec.create());
   }
 
   /**
@@ -80,6 +89,26 @@ export struct PageServer {
    * its own worker to draw (`PAGE_SURFACE`). Until it is told, a child's canvases are drawn through this server.
    */
   void forChild(this, i32 handle) { this.child = handle; }
+
+  /**
+   * **Who decides the child's full screen** (`PAGE_FULLSCREEN`): told the element it asked for and whether it asked to
+   * fill the screen or to leave it, as it asks. Whatever it decides, it says so with `fullScreened`.
+   */
+  void whenFullScreen(this, fn<void(Element, bool)> ask) { this.asksFull = ask; }
+
+  /**
+   * The child's page fills the screen now, or no longer does: each of its elements listening for `fullscreenchange`
+   * hears it, `"1"` or `""`, as a browser's page hears its own — whether the child asked or the person left it.
+   */
+  void fullScreened(this, bool on) {
+    for (i32 i = 0; i < this.hearFull.len(); i++) {
+      i32 listener = this.hearFull.get(i);
+      if (this.at(listener) is null) { continue; }
+      this.seq++;
+      this.told(Happened(this.seq, "fullscreenchange", listener, listener, on ? "1" : "", 0, 0, 0, 0 - 1, 0 - 1,
+                         this.page.now(), 0 - 1));
+    }
+  }
 
   /** What `Procs.spawnProviding` is handed, so the child finds this as `wac.page`. */
   Provider provider(this) {
@@ -284,6 +313,15 @@ export struct PageServer {
       this.refuse("go: a window's page has no location of its own");
       return;
     }
+    if (k == PAGE_FULLSCREEN) {
+      Element? asked = this.at(h);
+      if (asked is null || this.asksFull is null) {
+        this.refuse("fullscreen: \{h} is not an element this server can ask full screen for");
+        return;
+      }
+      this.asksFull!(asked!, b != 0 as i64);
+      return;
+    }
     if (k == PAGE_TITLE) {
       this.onTitle(text);
       return;
@@ -376,6 +414,12 @@ export struct PageServer {
       e.move(to);
       return;
     }
+    if (k == PAGE_LISTEN && text == "fullscreenchange") {
+      // Never the document's to say: the child's element is not what fills the screen (`fullScreened`).
+      for (i32 i = 0; i < this.hearFull.len(); i++) { if (this.hearFull.get(i) == h) { return; } }
+      this.hearFull.push(h);
+      return;
+    }
     if (k == PAGE_LISTEN) {
       PageServer s = this;
       i32 listener = h;
@@ -433,6 +477,11 @@ export struct PageServer {
     this.seq++;
     Happened h = Happened(this.seq, ev.kind, target ?? listener, listener, ev.value, ev.x, ev.y, ev.mods, ev.selStart,
                           ev.selEnd, ev.at, ev.pointer);
+    this.told(h);
+  }
+
+  /** `h` for the child: answered now if it is asking for its next event, or kept until it does. */
+  void told(this, Happened h) {
     Ticket<Answer>? t = this.asking.pop();
     if (t is not null) {
       t!.resolve(eventAnswer(h));
