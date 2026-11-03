@@ -118,6 +118,24 @@ for (const mode of [[], ["--in-page"]]) {
           if (await page.evaluate(`document.getElementById("drawn").hasAttribute("data-wac-surface")`)) throw new Error("handed over on the page's own thread");
         }
 
+        // Full screen, asked for after a click: the browser's own, the box filling it, and the program told; asked
+        // again, left. Where the browser has none — an iPhone's — the box fills the window instead, said the same way.
+        await page.click("#full");
+        await waitInPage(page, `${text("filled")} === "full" && document.fullscreenElement === document.getElementById("box")`, null, { timeout: 10_000 });
+        await page.click("#full");
+        await waitInPage(page, `${text("filled")} === "not full" && document.fullscreenElement === null`, null, { timeout: 10_000 });
+        const noFullScreen = await browser.newPage({ viewport: { width: 400, height: 300 } });
+        await noFullScreen.addInitScript(`Object.defineProperty(Element.prototype, "requestFullscreen", { value: undefined })`);
+        await noFullScreen.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+        await waitInPage(noFullScreen, `document.getElementById("full") !== null`, null, { timeout: 30_000 });
+        await noFullScreen.click("#full");
+        await waitInPage(noFullScreen, `${text("filled")} === "full" && (() => { const r = document.getElementById("box").getBoundingClientRect();
+          return r.left === 0 && r.top === 0 && r.width === 400 && r.height === 300; })()`, null, { timeout: 10_000 });
+        await noFullScreen.click("#full");
+        await waitInPage(noFullScreen, `${text("filled")} === "not full" && !document.getElementById("box").hasAttribute("data-wac-full")
+          && getComputedStyle(document.getElementById("box")).position === "static"`, null, { timeout: 10_000 });
+        await noFullScreen.close();
+
         // A place added to the history: the program hears it, the address shows it, and the browser's Back leaves it.
         await page.click("#deeper");
         await waitInPage(page, `${text("where")} === "deeper" && location.hash === "#deeper"`, null, { timeout: 10_000 });

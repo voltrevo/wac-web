@@ -57,7 +57,8 @@ export struct ElementEvent {
   Element target;
   /**
    * An input's value for `input` and `change`; the key for a key event, as the browser names it; for `wheel`, how far
-   * it turned, in whole pixels down (`"-120"` is up); for `resize`, the device's pixels to a CSS pixel.
+   * it turned, in whole pixels down (`"-120"` is up); for `resize`, the device's pixels to a CSS pixel; for
+   * `fullscreenchange`, `"1"` while the element fills the screen and `""` once it does not (`Element.fullScreen`).
    */
   string value;
   /**
@@ -363,6 +364,16 @@ export struct Element {
     if (this.surface < 0) { return false; }
     Ticket<Answer> drawn = ask(this.es.line.host, op, this.surface as i64, b, "", rgba);
     return drawn.settled() && drawn.value().fault == FAULT_NONE();
+  }
+
+  /**
+   * **Ask for this element to fill the screen**, or to leave it (`PAGE_FULLSCREEN`): the host decides — a browser only
+   * just after a tap or a key, a desktop by its own rules — so what happened is heard from `fullscreenchange`, its
+   * value `"1"` while full and `""` once not, the person leaving it with Back or Escape included.
+   */
+  void fullScreen(this, bool on) {
+    this.alive("fullScreen");
+    this.es.line.fullScreen(this.id, on);
   }
 
   /** Hand this canvas to the worker of the child spawned as `child`, as its surface `key` (`PAGE_SURFACE`). */

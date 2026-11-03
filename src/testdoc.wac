@@ -17,7 +17,7 @@ import { Answer, FAULT_UNSUPPORTED, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MO
          answered } from "std";
 import { Elements } from "./element.wac";
 import { Page } from "./page.wac";
-import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_GAIN, PAGE_GO, PAGE_LOCATION, PAGE_SURFACE, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
+import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_GAIN, PAGE_GO, PAGE_LOCATION, PAGE_SURFACE, PAGE_FULLSCREEN, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
          PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt, getF64 } from "./line.wac";
 
 /** Where this document's `wac.page` numbers start, as a host would choose them. */
@@ -266,6 +266,10 @@ export struct TestDoc {
     if (k == 17) { this.said = this.said + "download " + text + "\n"; return; }
     if (k == PAGE_SURFACE) {
       this.said = this.said + "surface \{a} for \{highOf(b)} as \{lowOf(b)}\n";
+      return;
+    }
+    if (k == PAGE_FULLSCREEN) {
+      this.said = this.said + "fullscreen \{a}" + (b != (0 as i64) ? " on" : " off") + "\n";
       return;
     }
     if (k == PAGE_GO) {

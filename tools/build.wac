@@ -328,6 +328,8 @@ export string programSide() {
               wacSurfaceForward.set(fwd, { child, key });
               return send(["surface", lo(a), fwd]);
             }
+            // Full screen, asked for: the document's to try, and the browser's to allow.
+            case 29: return send(["fullScreen", lo(a), b !== 0n]);
             // The program's new location, known here at once; the document's history is the document's to change.
             case 27: at = "#" + text; located(); return send(["go", text, a !== 0n]);
             // The changes the program held, in order, as each would have come alone; answered at once.
@@ -1187,6 +1189,9 @@ export string documentSide() {
           for (const kind of ["pointerdown", "keydown", "touchend"]) addEventListener(kind, resume, true);
           return ctx;
         };
+        // What an element filling the window, where there is no full screen, is styled with: above everything, edge to edge.
+        const WAC_FILL = [["position", "fixed"], ["inset", "0"], ["z-index", "2147483647"], ["width", "auto"],
+                          ["height", "auto"], ["margin", "0"], ["max-width", "none"], ["max-height", "none"]];
         const ops = {
           make: (id, parent, tag, before) => {
             // `#shadow` is the parent's shadow root, opened — a page of its own inside it (`Element.shadow`).
@@ -1306,6 +1311,7 @@ export string documentSide() {
               const el = ev.target;
               // A wheel's value is how far it turned, in whole pixels down: a line is counted as 16, a page as 800.
               const value = keyed ? ev.key
+                : kind === "fullscreenchange" ? (el && (document.fullscreenElement === el || el.hasAttribute?.("data-wac-full")) ? "1" : "")
                 : kind === "wheel" ? String(Math.round(ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 800 : 1)))
                 : (el && "value" in el ? String(el.value) : "");
               // In the listening element's own pixels, whatever is under the pointer inside it: a bar's
@@ -1320,6 +1326,27 @@ export string documentSide() {
             });
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },
+          // **Full screen, as the program asked** (`PAGE_FULLSCREEN`): the browser's own where it has it — which says no
+          // unless a tap or a key came just before, and is left with Back or Escape — and otherwise, an iPhone's
+          // browser, the element made to fill the window instead, said the same way: by `fullscreenchange`.
+          fullScreen: (id, on) => {
+            const el = nodes.get(id);
+            if (!el) return;
+            const filled = el.hasAttribute("data-wac-full");
+            if (on) {
+              if (document.fullscreenElement === el || filled) return;
+              if (el.requestFullscreen && document.fullscreenEnabled) { el.requestFullscreen().catch(() => {}); return; }
+              el.setAttribute("data-wac-full", "");
+              for (const [k, v] of WAC_FILL) el.style.setProperty(k, v, "important");
+              el.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
+              return;
+            }
+            if (document.fullscreenElement === el) { document.exitFullscreen().catch(() => {}); return; }
+            if (!filled) return;
+            el.removeAttribute("data-wac-full");
+            for (const [k] of WAC_FILL) el.style.removeProperty(k);
+            el.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
+          },
           // A handle's canvas, which `Element.pixels` has already checked is one.
           // **A canvas handed to a worker to draw** (`PAGE_SURFACE`): from now on it shows what that worker draws, and
           // pixels sent here for it are not drawn. Numbered for the document, so a test can find what was drawn.
