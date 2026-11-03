@@ -7,7 +7,7 @@
 import { Check } from "./check.wac";
 import { Result, Ticket, Vec } from "core";
 import { Answer, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MONOTONIC_NANOS, Sys, answered } from "std";
-import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_GO, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, PAGE_WINDOW, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
+import { DESKTOP_CAPABILITY, DESKTOP_COUNT, DESKTOP_NEW, DESKTOP_OPEN, DESKTOP_PICK, DESKTOP_WINDOW, PAGE_BATCH, PAGE_EVENT, PAGE_GO, PAGE_SURFACE, PAGE_LOCATION, Desktop, Element, ElementEvent, Node, PAGE_COUNT, PAGE_WINDOW, Picked, Runner, PAGE_MAKE, PAGE_ATTR, PAGE_REMOVE, PAGE_VERSION, Page, PageLine,
          PageServer, TestDoc, Ui, html.b, html.button, html.p, pair, when } from "../../src/page.wac";
 
 /** Where the child's host numbers `wac.page`, and `wac.desktop`. */
@@ -347,6 +347,17 @@ export string test_a_childs_sounds_play_through_the_desktop_and_stop_with_its_wi
   r.server.louder(1.0, 100);
   r.desk.turn();
   t.isTrue(r.doc.said.indexOf("gain 6 200 100\n") >= 0, "turned up again, back to what it asked: " + r.doc.said);
+  // A child's canvas is handed to the child's own worker — once the server knows the child — and only a canvas.
+  auto canvas = r.child.root().append("canvas");
+  r.child.turn();
+  r.desk.turn();
+  r.server.answer(PAGE_SURFACE, canvas.id as i64, pair(0 - 1, 7), "", u8[]());
+  t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("not a canvas") >= 0, "not before it knows the child");
+  r.server.refused.clear();
+  r.server.forChild(41);
+  r.server.answer(PAGE_SURFACE, canvas.id as i64, pair(0 - 1, 7), "", u8[]());
+  r.desk.turn();
+  t.isTrue(r.doc.said.indexOf(" for 41 as 7\n") >= 0, "handed to child 41 as its surface 7: " + r.doc.said);
   // A window's page has no location to go to: the desktop's is the desktop's.
   r.server.answer(PAGE_GO, 1 as i64, 0 as i64, "elsewhere", u8[]());
   t.isTrue(r.server.refused.len() == 1 && r.server.refused.get(0).indexOf("no location") >= 0, "a child's go is refused");

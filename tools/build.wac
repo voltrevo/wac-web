@@ -319,6 +319,15 @@ export string programSide() {
             }
             case 25: return send(["stop", lo(a)]);
             case 26: return send(["gain", lo(a), hi(b) / 1000, lo(b)]);
+            // **A canvas handed to a worker to draw**: this program's own, or — named by the handle it spawned the child
+            // as — a child's, whose surface is passed down to it when the document has handed it over.
+            case 28: {
+              const child = hi(b), key = lo(b);
+              if (child < 0) return send(["surface", lo(a), key]);
+              const fwd = ++wacSurfaceNext;
+              wacSurfaceForward.set(fwd, { child, key });
+              return send(["surface", lo(a), fwd]);
+            }
             // The program's new location, known here at once; the document's history is the document's to change.
             case 27: at = "#" + text; located(); return send(["go", text, a !== 0n]);
             // The changes the program held, in order, as each would have come alone; answered at once.
@@ -664,6 +673,24 @@ export string systemSide() {
               return answer(id, 0, said, NONE, BigInt(value), 0n, status);
             }
             case 66: loaded.delete(n); return;
+            // **Surfaces**: a canvas this worker draws itself (web's `HOST_SURFACE_*`), answered here, at once — in a
+            // worker only, where a canvas can be handed; a page on the page's own thread draws the usual way.
+            case 900001: {
+              if (typeof WorkerGlobalScope === "undefined" || typeof OffscreenCanvas === "undefined" || typeof wacSurfaceOf !== "function") {
+                return answer(id, 9, "no surfaces here", NONE, 0n, 0n, 0);
+              }
+              const k = ++wacSurfaceNext;
+              wacSurfaceOf(k);
+              return ok(id, NONE, BigInt(k));
+            }
+            case 900002: case 900003: {
+              const whole = op === 900002;
+              const q = (k) => Number((b >> BigInt(48 - 16 * k)) & 0xffffn);
+              const drawn = typeof wacSurfaceDraw === "function"
+                && (whole ? wacSurfaceDraw(n, 0, 0, Number(b >> 32n), Number(BigInt.asIntN(32, b)), true, bytes)
+                          : wacSurfaceDraw(n, q(0), q(1), q(2), q(3), false, bytes));
+              return answer(id, drawn ? 0 : 9, drawn ? "" : "the surface has not arrived", NONE, 0n, 0n, 0);
+            }
             case 68: return answer(id, 9, "no capability " + text + " in a page", NONE, 0n, 0n, 0);
             default: return answer(id, 9, "a page does not serve request " + op, NONE, 0n, 0n, 0);
           }
@@ -688,6 +715,7 @@ export string systemSide() {
           if (c.gone) return;
           c.gone = true;
           if (c.id >= 0) { wacTellPage(["stop", c.id]); wacChildFailed.delete(c.id); }
+          wacChildren.delete(c.h);
           c.port?.close();
           c.out.end(); c.err.end(); c.fs.end();
           c.settle(code);
@@ -718,6 +746,9 @@ export string systemSide() {
           // What this program sends before the channel arrives waits for it.
           c.send = (m, transfer) => { if (c.port !== null) c.port.postMessage(m, transfer ?? []); else c.waiting.push([m, transfer]); };
           const h = nextHandle++, eh = nextHandle++, fh = serveFs ? nextHandle++ : -1;
+          // Known by the handle its program holds (`Child.handle`): what a surface for one of its canvases is sent by.
+          c.h = h;
+          wacChildren.set(h, c);
           handles.set(h, { kind: "out", child: c, q: c.out });
           handles.set(eh, { kind: "err", child: c, q: c.err });
           if (fh >= 0) handles.set(fh, { kind: "fs", child: c, q: c.fs });
@@ -915,9 +946,9 @@ export string moduleSide() {
       // Files need `GRANT_READ` (1) to look and `GRANT_WRITE` (2) to change, and what it starts or loads holds no
       // more than it does. A program with no files of its own is served its parent's over handle 1, and asks
       // nothing here. Answers the browser has at once — the clock, randomness, an argument, the directory, a write
-      // to a stream, and the module calls — are delivered inside the request that asked; the rest when `later`
+      // to a stream, the module calls, and a surface made or drawn — are delivered inside the request that asked; the rest when `later`
       // says, which is between turns, when the module is running nothing.
-      const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48, 64, 65, 66, 67]);
+      const AT_ONCE = new Set([1, 2, 3, 6, 7, 41, 12, 48, 64, 65, 66, 67, 900001, 900002, 900003]);
       const wacServe = (me, wasm, grants, deliver, later) => {
         const NONE = new Uint8Array(0);
         let asking = -1;
@@ -1099,6 +1130,9 @@ export string moduleSide() {
  */
 export string documentSide() {
   return """
+      // The canvases handed to workers to draw, by the document's number for each: sized as their workers say.
+      const wacSurfaceEls = new Map();
+      let wacSurfaceDocNext = 0;
       const wacDocument = (root, emit) => {
         // **The handles**: each number the program chose, and the node it named. 0 is the root.
         const nodes = new Map([[0, root]]);
@@ -1131,8 +1165,10 @@ export string documentSide() {
           if (!el.getBoundingClientRect && el.host) el = el.host;
           if (ev.clientX === undefined || !el.getBoundingClientRect) return [0, 0];
           const r = el.getBoundingClientRect();
-          const sx = el.width !== undefined && r.width > 0 ? el.width / r.width : 1;
-          const sy = el.height !== undefined && r.height > 0 ? el.height / r.height : 1;
+          // A handed-over canvas's own pixels are as large as its worker last said.
+          const cw = el.__wacSurface ? el.__wacSurface.w : el.width, ch = el.__wacSurface ? el.__wacSurface.h : el.height;
+          const sx = cw !== undefined && r.width > 0 ? cw / r.width : 1;
+          const sy = ch !== undefined && r.height > 0 ? ch / r.height : 1;
           return [Math.round((ev.clientX - r.left) * sx), Math.round((ev.clientY - r.top) * sy)];
         };
         // **One audio context, made when a page first makes a sound**, with the lowest latency the browser offers:
@@ -1180,6 +1216,8 @@ export string documentSide() {
           },
           attr: (id, name, value, present) => {
             const n = nodes.get(id);
+            // A handed-over canvas is sized by the worker that draws it, and refuses to be resized here.
+            if (n && n.__wacSurface && (name === "width" || name === "height")) return;
             if (n && n.setAttribute) { if (present) n.setAttribute(name, value); else n.removeAttribute(name); }
           },
           prop: (id, name, value, seen) => {
@@ -1283,15 +1321,28 @@ export string documentSide() {
           },
           focus: (id) => { const n = nodes.get(id); if (n && n.focus) n.focus(); },
           // A handle's canvas, which `Element.pixels` has already checked is one.
+          // **A canvas handed to a worker to draw** (`PAGE_SURFACE`): from now on it shows what that worker draws, and
+          // pixels sent here for it are not drawn. Numbered for the document, so a test can find what was drawn.
+          surface: (id, key) => {
+            const el = nodes.get(id);
+            if (!el || el.tagName !== "CANVAS" || el.__wacSurface || !el.transferControlToOffscreen) return;
+            let off;
+            try { off = el.transferControlToOffscreen(); } catch { return; }
+            const docId = ++wacSurfaceDocNext;
+            el.__wacSurface = { id: docId, w: el.width, h: el.height };
+            el.setAttribute("data-wac-surface", String(docId));
+            wacSurfaceEls.set(docId, el);
+            emit(["surface", key, off, docId], [off]);
+          },
           pixels: (id, w, h, rgba) => {
             const el = nodes.get(id);
-            if (!el) return;
+            if (!el || el.__wacSurface) return;
             // Resizing clears a canvas, so only when the size changes.
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             blit(el.getContext("2d"), w, h, rgba, 0, 0);
           },
-          pixelsIn: (id, x, y, w, h, rgba) => { const el = nodes.get(id); if (el) blit(el.getContext("2d"), w, h, rgba, x, y); },
+          pixelsIn: (id, x, y, w, h, rgba) => { const el = nodes.get(id); if (el && !el.__wacSurface) blit(el.getContext("2d"), w, h, rgba, x, y); },
           // Under the handle's own element only: a name reaches no further than the handle does.
           scroll: (id, named) => {
             const n = nodes.get(id);
@@ -1459,6 +1510,11 @@ export string brokerSide() {
           for (const [other, o] of kids) if (o.parent === k.worker) stop(other);
         };
         const broker = (from, m) => {
+          if (Array.isArray(m) && m[0] === "surfaceSize") {
+            const s = wacSurfaceEls.get(m[1])?.__wacSurface;
+            if (s) { s.w = m[2]; s.h = m[3]; }
+            return true;
+          }
           if (!Array.isArray(m) || m[0] !== "broker") return false;
           const [, n, op, ...rest] = m;
           if (op === "stop") { stop(rest[0]); return true; }
@@ -1499,8 +1555,58 @@ export string brokerClient() {
         postMessage(["broker", n, ...m], transfer ?? []);
       });
       const wacTellPage = (m) => postMessage(["broker", 0, ...m]);
+      // ── Surfaces: canvases this worker draws itself (web's `HOST_SURFACE_*`, `PAGE_SURFACE`) ──
+      // Each by its key: the canvas once it has arrived, and what to draw when it does. A key forwarded is a child's,
+      // by the handle its program spawned it as; the children so known. `wacSurfaceById`, by the document's number for
+      // each, is for a test to read back what was drawn — the document cannot, once a canvas is handed over.
+      const wacSurfaces = new Map(), wacSurfaceForward = new Map(), wacChildren = new Map();
+      let wacSurfaceNext = 0;
+      self.wacSurfaceById = new Map();
+      const wacSurfaceOf = (key) => {
+        let s = wacSurfaces.get(key);
+        if (s === undefined) { s = { canvas: null, ctx: null, docId: 0, pending: null }; wacSurfaces.set(key, s); }
+        return s;
+      };
+      const wacSurfaceCame = (key, canvas, docId) => {
+        const f = wacSurfaceForward.get(key);
+        if (f !== undefined) {
+          wacSurfaceForward.delete(key);
+          wacChildren.get(f.child)?.send(["surface", f.key, canvas, docId], [canvas]);
+          return;
+        }
+        const s = wacSurfaceOf(key);
+        s.canvas = canvas;
+        s.ctx = canvas.getContext("2d");
+        s.docId = docId;
+        self.wacSurfaceById.set(docId, canvas);
+        const p = s.pending;
+        s.pending = null;
+        if (p !== null) wacSurfaceDraw(key, 0, 0, p.w, p.h, true, p.data);
+      };
+      // Drawn — or, before the canvas has arrived, kept to draw when it does, and false: the program sends it the
+      // usual way meanwhile. Resized, the document is told, which places the pointer in the canvas's pixels by it.
+      const wacSurfaceDraw = (key, x, y, w, h, whole, rgba) => {
+        const s = wacSurfaces.get(key);
+        if (s === undefined) return false;
+        if (s.ctx === null) {
+          if (whole) s.pending = { w, h, data: new Uint8ClampedArray(rgba) };
+          else if (s.pending !== null) {
+            const p = s.pending, cols = Math.min(w, p.w - x) * 4;
+            for (let r = 0; r < h && y + r < p.h && cols > 0; r++) p.data.set(rgba.subarray(r * w * 4, r * w * 4 + cols), ((y + r) * p.w + x) * 4);
+          }
+          return false;
+        }
+        if (whole && (s.canvas.width !== w || s.canvas.height !== h)) {
+          s.canvas.width = w;
+          s.canvas.height = h;
+          postMessage(["surfaceSize", s.docId, w, h]);
+        }
+        if (w > 0 && h > 0) s.ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, w * h * 4), w, h), x, y);
+        return true;
+      };
       const wacFromPage = (m) => {
         if (!Array.isArray(m)) return false;
+        if (m[0] === "surface") { wacSurfaceCame(m[1], m[2], m[3]); return true; }
         if (m[0] === "brokered") {
           const done = wacAsked.get(m[1]);
           wacAsked.delete(m[1]);
@@ -1514,6 +1620,7 @@ export string brokerClient() {
         if (m[0] === "stdin") stdin.push(m[1]);
         else if (m[0] === "stdinEnd") stdin.end();
         else if (m[0] === "fs") fsIn.push(m[1]);
+        else if (m[0] === "surface") wacSurfaceCame(m[1], m[2], m[3]);
       };
       """;
 }

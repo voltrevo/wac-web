@@ -73,7 +73,11 @@ of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses
 A component starts work that outlives a render from an effect: a timer with `ui.every`, a loop awaiting
 `page.nextFrame()` or `page.nextFile()` that sets state as things arrive. A canvas is named with a ref
 and drawn from an effect with `pixels(w, h, rgba)` or `pixelsIn(x, y, w, h, rgba)`, and a handler's event
-carries `x` and `y` in the pixels of the element that listened — a canvas's backing store's.
+carries `x` and `y` in the pixels of the element that listened — a canvas's backing store's. **A canvas is drawn in
+the program's own worker** where it can be: the first time it is drawn, the document hands it over
+(`transferControlToOffscreen`), and from then on each frame is drawn where it was made, with nothing sent to the
+document — or, in a window of a desktop, through the desktop's worker on the way, which a child's surface is passed
+down past. A page on the page's own thread, or a test's, draws the usual way.
 
 **Several things at once is `Ticket.any`**, for a task that owns an element rather than a view — a
 terminal reading keys while a command runs:

@@ -1,6 +1,6 @@
 // What a page can tell about the person and the screen: its own size on screen, which way the wheel turned, how
 // long a key took to reach it, where in the browser's history it is — which it can add to and Back returns from — and
-// two fingers at once on a pad that keeps each until it lifts. What `test/sense_live.test.ts` builds and drives in a browser.
+// two fingers at once on a pad that keeps each until it lifts; and a canvas it draws in its own worker. What `test/sense_live.test.ts` builds and drives in a browser.
 
 import { Element, ElementEvent, Listen, Page } from "../src/page.wac";
 
@@ -41,6 +41,15 @@ export async i32 main(Page page) {
   string felt = "";
   pad.on("pointerdown", Listen.keys("* capture"), (ElementEvent e) => { felt = felt + "down \{e.pointer};"; fingers.text(felt); });
   pad.on("pointerup", Listen.keys("* capture"), (ElementEvent e) => { felt = felt + "up \{e.pointer};"; fingers.text(felt); });
+  // A canvas drawn red: by this program's worker itself, once the document has handed it over.
+  Element drawn = box.append("canvas");
+  drawn.attr("id", "drawn");
+  u8[] red = u8[].filled(4 * 2 * 4, 255 as u8);
+  for (i32 i = 0; i < 8; i++) {
+    red[i * 4 + 1] = 0 as u8;
+    red[i * 4 + 2] = 0 as u8;
+  }
+  drawn.pixels(4, 2, red);
   i32 turned = 0;
   box.on("resize", Listen.none(), (ElementEvent e) => { size.text("\{e.x}x\{e.y}"); });
   box.on("wheel", Listen.all(), (ElementEvent e) => {

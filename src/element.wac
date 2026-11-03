@@ -22,8 +22,8 @@
 // network grant cannot send anything anywhere even if this were wrong.
 
 import { Queue, Ticket, Vec } from "core";
-import { Answer } from "std";
-import { Happened, PageLine, happenedOf, when } from "./line.wac";
+import { Answer, FAULT_NONE, ask } from "std";
+import { HOST_SURFACE_DRAW, HOST_SURFACE_DRAW_IN, HOST_SURFACE_NEW, Happened, PageLine, happenedOf, pair, quad, when } from "./line.wac";
 
 /** What the document does with an event of a kind, decided before any event happens. */
 export struct Listen {
@@ -175,6 +175,8 @@ export struct Element {
   /** Events that arrived while nothing waited, and the tickets `next()` handed out. */
   Queue<ElementEvent> arrived;
   Queue<Ticket<ElementEvent>> waiting;
+  /** A canvas's surface (`HOST_SURFACE_NEW`): its key; -2 not asked for yet, -1 none to be had. */
+  i32 surface;
 
   Element made(Elements es, i32 id, string tag, Element? parent) {
     Vec<Element> kids = Vec.create();
@@ -182,7 +184,7 @@ export struct Element {
     Vec<fn<void(ElementEvent)>> handlers = Vec.create();
     Queue<ElementEvent> arrived;
     Queue<Ticket<ElementEvent>> waiting;
-    return Element(es, id, tag, parent, kids, true, kinds, handlers, arrived, waiting);
+    return Element(es, id, tag, parent, kids, true, kinds, handlers, arrived, waiting, 0 - 2);
   }
 
   void alive(this, string what) {
@@ -334,10 +336,39 @@ export struct Element {
     this.es.line.scroll(this.id, named);
   }
 
-  /** Draw `rgba` — `w` by `h`, four bytes a pixel, row by row — as all of this canvas, sized to match. */
+  /**
+   * Draw `rgba` — `w` by `h`, four bytes a pixel, row by row — as all of this canvas, sized to match.
+   *
+   * **Drawn by this program's own worker** where its host can (`HOST_SURFACE_DRAW`): the canvas is handed over to it
+   * the first time, and from then on a frame is drawn where it was made — no message to the document, and none
+   * through a desktop's worker on the way. Until the canvas arrives, and where there is no surface to be had, the
+   * pixels are sent the usual way.
+   */
   void pixels(this, i32 w, i32 h, u8[] rgba) {
     this.drawable("pixels", w, h, rgba);
+    if (this.drewOwn(HOST_SURFACE_DRAW, pair(w, h), rgba)) { return; }
     this.es.line.pixels(this.id, w, h, rgba);
+  }
+
+  /** Drawn on this canvas's surface, if it has one that has arrived — asking for one the first time. */
+  bool drewOwn(this, i32 op, i64 b, u8[] rgba) {
+    if (this.surface == 0 - 2) {
+      this.surface = 0 - 1;
+      Ticket<Answer> made = ask(this.es.line.host, HOST_SURFACE_NEW, 0 as i64, 0 as i64, "", u8[]());
+      if (made.settled() && made.value().fault == FAULT_NONE()) {
+        this.surface = made.value().n as~ i32;
+        this.es.line.surface(this.id, 0 - 1, this.surface);
+      }
+    }
+    if (this.surface < 0) { return false; }
+    Ticket<Answer> drawn = ask(this.es.line.host, op, this.surface as i64, b, "", rgba);
+    return drawn.settled() && drawn.value().fault == FAULT_NONE();
+  }
+
+  /** Hand this canvas to the worker of the child spawned as `child`, as its surface `key` (`PAGE_SURFACE`). */
+  void surfaceFor(this, i32 child, i32 key) {
+    this.alive("surfaceFor");
+    this.es.line.surface(this.id, child, key);
   }
 
   /**
@@ -349,6 +380,7 @@ export struct Element {
     if (x < 0 || y < 0 || x > 65535 || y > 65535 || w > 65535 || h > 65535) {
       trap "Element.pixelsIn: \{x},\{y} \{w}x\{h} — each is 0 to 65535";
     }
+    if (this.drewOwn(HOST_SURFACE_DRAW_IN, quad(x, y, w, h), rgba)) { return; }
     this.es.line.pixelsIn(this.id, x, y, w, h, rgba);
   }
 

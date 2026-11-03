@@ -30,7 +30,7 @@ import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
-export string PAGE_VERSION() { return "1.4.0"; }
+export string PAGE_VERSION() { return "1.5.0"; }
 
 /** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
 export static i32 PAGE_MAKE = 0;
@@ -108,8 +108,34 @@ export static i32 PAGE_GAIN = 26;
  * it, or 0 to take the place of the location there is. The program hears it as any new location (`PAGE_LOCATION`).
  */
 export static i32 PAGE_GO = 27;
+/**
+ * `a` a canvas's handle, `b` pair(a child's handle, a surface's key): **the canvas drawn from now on by a worker, not
+ * through the document** — handed over (`transferControlToOffscreen`) to the worker that made surface `key`
+ * (`HOST_SURFACE_NEW`): this program's own, or, from a server forwarding a child's page (`PageServer`), that child's,
+ * by the handle its parent spawned it as; -1 for this program. What the canvas showed is its surface's from then on,
+ * and pixels sent for it the usual way are not drawn.
+ */
+export static i32 PAGE_SURFACE = 28;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 28;
+export static i32 PAGE_COUNT = 29;
+
+/**
+ * **A surface: a canvas a worker draws itself**, rather than sending every frame's pixels to the document — and, in
+ * a window of a desktop, through the desktop's worker on the way. Requests every browser worker answers itself, at
+ * once: numbered among a host's own, below where a parent numbers what it provides, so a child's go to its own worker
+ * and never its parent's. A host that answers none of them — a test's, a page on the page's own thread — leaves a
+ * canvas drawn the usual way.
+ *
+ * `HOST_SURFACE_NEW` → `n` a key for a surface this worker will draw, once a canvas is handed to it (`PAGE_SURFACE`).
+ */
+export static i32 HOST_SURFACE_NEW = 900001;
+/**
+ * `a` a surface's key, `b` pair(w, h), `bytes` rgba: all of it drawn, sized to match; faulted until its canvas has
+ * arrived, which keeps them to draw when it does.
+ */
+export static i32 HOST_SURFACE_DRAW = 900002;
+/** `a` a surface's key, `b` quad(x, y, w, h), `bytes` rgba: drawn with its corner at (x, y), as `PAGE_PIXELS_IN`. */
+export static i32 HOST_SURFACE_DRAW_IN = 900003;
 /**
  * **How far apart a desktop's windows' slices of `wac.page` are**: more than `PAGE_COUNT`, so a request added later
  * does not move every window but the first — a program and the desktop it runs in are built separately, and each
@@ -323,6 +349,7 @@ export struct PageLine {
   void typeText(this, i32 id, string text, i32 seen) { this.tell(PAGE_TYPE_TEXT, pair(seen, id), 0 as i64, text, u8[]()); }
   void title(this, string t) { this.tell(PAGE_TITLE, 0 as i64, 0 as i64, t, u8[]()); }
   void go(this, string where, bool push) { this.tell(PAGE_GO, (push ? 1 : 0) as i64, 0 as i64, where, u8[]()); }
+  void surface(this, i32 id, i32 child, i32 key) { this.tell(PAGE_SURFACE, id as i64, pair(child, key), "", u8[]()); }
   void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
   void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }
   void sound(this, i32 id, i32 rate, u8[] samples) { this.tell(PAGE_SOUND, id as i64, rate as i64, "", samples); }

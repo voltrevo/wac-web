@@ -96,6 +96,28 @@ for (const mode of [[], ["--in-page"]]) {
           throw new Error(`two fingers, each lifted, the one slid off too: ${felt}`);
         }
 
+        // The canvas: in a worker, handed to the program's worker and drawn there, red, at its size; on the page's own
+        // thread, where nothing is handed over, drawn by the page.
+        if (mode.length === 0) {
+          await waitInPage(page, `document.getElementById("drawn")?.hasAttribute("data-wac-surface") === true`, null, { timeout: 10_000 });
+          const surface = Number(await page.evaluate(`document.getElementById("drawn").getAttribute("data-wac-surface")`));
+          let red = "";
+          for (let i = 0; i < 100 && red !== "255,0,0,255|4x2"; i++) {
+            for (const w of page.workers()) {
+              // As text: the worker's own, which Deno's types do not describe.
+              const got = await w.evaluate(`(() => { const c = self.wacSurfaceById?.get(${surface});
+                return c ? Array.from(c.getContext("2d").getImageData(3, 1, 1, 1).data).join() + "|" + c.width + "x" + c.height : ""; })()`) as string;
+              if (got !== "") red = got;
+            }
+            if (red !== "255,0,0,255|4x2") await new Promise((r) => setTimeout(r, 50));
+          }
+          if (red !== "255,0,0,255|4x2") throw new Error(`the canvas, drawn in the worker: ${red}`);
+        } else {
+          await waitInPage(page, `(() => { const c = document.getElementById("drawn"); return c !== null && c.width === 4
+            && c.getContext("2d").getImageData(3, 1, 1, 1).data.join() === "255,0,0,255"; })()`, null, { timeout: 10_000 });
+          if (await page.evaluate(`document.getElementById("drawn").hasAttribute("data-wac-surface")`)) throw new Error("handed over on the page's own thread");
+        }
+
         // A place added to the history: the program hears it, the address shows it, and the browser's Back leaves it.
         await page.click("#deeper");
         await waitInPage(page, `${text("where")} === "deeper" && location.hash === "#deeper"`, null, { timeout: 10_000 });
