@@ -177,7 +177,7 @@ for the clock and the sleeps it wakes, `paint` for frames, `answerValue`, `hand`
 ## Building one
 
     wac run --allow-read --allow-write --allow-run tools/build.wac \
-        <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--app <icon.png> [--app-color <#rgb>]] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `tools/build.wac` writes three files: `page.wac`, **the page's program as a module** — a `main(Sys sys)` that
 opens the page its host provides, runs your `main(Page page)`, and renders each time a view has something to
@@ -196,6 +196,14 @@ half makes a decision; everything a page does is in `src/`, and what it was not 
 **`--edge` draws to the screen's edges**: under a phone's notch and home bar too (`viewport-fit=cover`), for a page
 that keeps its content clear of them with `env(safe-area-inset-…)`. Every page is made smaller by an on-screen
 keyboard rather than covered by it (`interactive-widget=resizes-content`), where the browser offers the choice.
+
+**`--app <icon.png>` makes it an app to install**: beside `index.html` the build writes a manifest — the page's
+title as its name, standing alone (`display: standalone`), `--app-color` its bar — the icon, square and at least
+512 pixels, which is also a phone's home-screen icon, and a service worker, `sw.js`. The service worker answers from
+the network first and keeps a copy of each of the site's files as it arrives, answering from the copy only when the
+network cannot: an installed app opens offline, and online it is never older than the site. The page's policy
+allows its own manifest, icon and worker (`'self'`), and nothing more. Served over http only — a page opened from a
+file has no origin to install from.
 
 **`--dev` is a development build**: after every turn each view renders everything again and logs, to the
 console, each place the page does not show what a component renders — which happens only when a render

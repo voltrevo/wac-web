@@ -40,7 +40,14 @@ for (const mode of [[], ["--in-page"]]) {
       let browser;
       let http: { port: number; stop(): Promise<void> } | undefined;
       try {
-        await buildPage("example/sense.wac", dir, ["--edge", ...mode]);
+        await buildPage("example/sense.wac", dir, ["--edge", "--app", "example/icon.png", "--app-color", "#123456", ...mode]);
+        // An app to install: its manifest, icon and service worker beside it, and named in its head.
+        const manifest = JSON.parse(await Deno.readTextFile(`${dir}/manifest.webmanifest`));
+        if (manifest.display !== "standalone" || manifest.theme_color !== "#123456" || manifest.icons[0].src !== "icon.png") {
+          throw new Error(`the manifest: ${JSON.stringify(manifest)}`);
+        }
+        await Deno.stat(`${dir}/icon.png`);
+        await Deno.stat(`${dir}/sw.js`);
         // To the screen's edges, and shrunk by an on-screen keyboard rather than covered.
         const index = await Deno.readTextFile(`${dir}/index.html`);
         if (!index.includes("interactive-widget=resizes-content, viewport-fit=cover")) throw new Error("the viewport of an --edge page");
@@ -79,6 +86,17 @@ for (const mode of [[], ["--in-page"]]) {
         await waitInPage(page, `${text("where")} === "home" && location.hash === ""`, null, { timeout: 10_000 });
         await page.goForward();
         await waitInPage(page, `${text("where")} === "deeper"`, null, { timeout: 10_000 });
+
+        // Installed, it opens without the network: the service worker kept the page as it loaded.
+        const manifestLink = await page.evaluate(`document.querySelector('link[rel=manifest]')?.href ?? ""`) as string;
+        if (!manifestLink.endsWith("/manifest.webmanifest")) throw new Error(`no manifest named: ${manifestLink}`);
+        await page.evaluate(`navigator.serviceWorker.ready.then(() => true)`);
+        await page.reload({ waitUntil: "load" });
+        await waitInPage(page, `navigator.serviceWorker.controller !== null && document.getElementById("box") !== null`, null, { timeout: 30_000 });
+        await page.context().setOffline(true);
+        await page.reload({ waitUntil: "load" });
+        await waitInPage(page, `document.getElementById("box") !== null`, null, { timeout: 30_000 });
+        await page.context().setOffline(false);
       } finally {
         await browser?.close();
         await http?.stop();

@@ -30,7 +30,7 @@ export async function buildModule(entry: string, out: string): Promise<void> {
  * Built under `.cache/pages/` first, because the builder writes its wrapper module into its output
  * directory and refuses one outside the project — from a temporary directory the wrapper's imports
  * would cross a project boundary. The page itself is one self-contained file, so copying it out is
- * all a test serving it needs.
+ * all a test serving it needs — and, built as an app to install (`--app`), its manifest, icon and service worker.
  *
  * Throws with the builder's own words on failure, because a test that carries on past a failed build
  * reports a confusing second failure about a file that is not there.
@@ -53,16 +53,22 @@ export async function buildPage(entry: string, outDir: string, extra: string[] =
   }
   await Deno.mkdir(outDir, { recursive: true });
   await Deno.copyFile(`${ROOT}/${built}/index.html`, `${outDir}/index.html`);
+  for (const f of ["manifest.webmanifest", "icon.png", "sw.js"]) {
+    if (extra.includes("--app")) await Deno.copyFile(`${ROOT}/${built}/${f}`, `${outDir}/${f}`);
+    else await Deno.remove(`${ROOT}/${built}/${f}`).catch(() => {});
+  }
   return `${outDir}/index.html`;
 }
 
-/** Serve a directory. A page built by this package needs no special headers. */
+/** Serve a directory. A page built by this package needs no special headers, but a service worker is a script. */
 export function serve(dir: string): { port: number; stop: () => Promise<void> } {
   const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen: () => {} }, async (req) => {
     const path = new URL(req.url).pathname;
     try {
       const body = await Deno.readFile(`${dir}${path === "/" ? "/index.html" : path}`);
-      return new Response(body, { headers: { "content-type": "text/html" } });
+      const type = path.endsWith(".js") ? "text/javascript" : path.endsWith(".png") ? "image/png"
+        : path.endsWith(".webmanifest") ? "application/manifest+json" : "text/html";
+      return new Response(body, { headers: { "content-type": type } });
     } catch {
       return new Response("not found", { status: 404 });
     }

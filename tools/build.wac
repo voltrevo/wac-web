@@ -46,6 +46,12 @@ struct Asked {
   /** A development build: the page checks its views after every turn (`Page.checking`). */
   bool dev;
   /**
+   * **An app to install** (`--app <icon.png>`): a manifest, the icon, and a service worker that keeps a copy of what
+   * the page loads, so it opens without the network — `appColor` the colour of its bar.
+   */
+  string appIcon;
+  string appColor;
+  /**
    * **To the screen's edges** (`--edge`): drawn under a phone's notch and home bar too — `viewport-fit=cover` — for a
    * page that keeps its own content clear of them with `env(safe-area-inset-…)`.
    */
@@ -54,7 +60,7 @@ struct Asked {
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(string[] argv) {
-  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false, false);
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false, "", "#5b55e6", false);
   i32 argc = argv.len();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = argv[k]; }
@@ -81,6 +87,11 @@ Asked askedOf(string[] argv) {
     if (w == "--dev") {
       a.dev = true;
       i++;
+      continue;
+    }
+    if ((w == "--app" || w == "--app-color") && i + 1 < argc) {
+      if (w == "--app") { a.appIcon = argv[i + 1]; } else { a.appColor = argv[i + 1]; }
+      i = i + 2;
       continue;
     }
     if (w == "--edge") {
@@ -1610,6 +1621,84 @@ export string edgeToEdge(string page) {
   return page.slice(0, at) + "content=\"" + VIEWPORT + ", viewport-fit=cover\"" + page.slice(at + from.len(), page.len());
 }
 
+// ── an app to install ───────────────────────────────────────────────────────
+
+/** `s` with its first `from` made `to` — or as it is, without one. */
+string swap(string s, string from, string to) {
+  i32 at = s.indexOf(from);
+  return at < 0 ? s : s.slice(0, at) + to + s.slice(at + from.len(), s.len());
+}
+
+static string APP_ICON = "icon.png";
+static string APP_WORKER = "sw.js";
+
+/**
+ * **What an installed app may load besides**: its manifest, its icon, and its service worker — each one of its own
+ * files (`'self'`), and nothing from anywhere else.
+ */
+export string appPolicy() {
+  return swap(swap(policy(), "worker-src blob:", "worker-src blob: 'self'"), "img-src data: blob:", "img-src data: blob: 'self'")
+       + "; manifest-src 'self'";
+}
+
+/**
+ * `page` as an app to install: its manifest and icon named in its head — the icon for a phone's home screen too —
+ * its policy allowing them, and its document registering the service worker, from a site (a page opened from a file
+ * has no origin to install from). Edge to edge, a phone's status bar is drawn over the page, which keeps clear of it.
+ */
+export string asApp(string page, string color, bool edge) {
+  string tags = "<link rel=\"manifest\" href=\"manifest.webmanifest\">\n"
+              + "<link rel=\"icon\" href=\"" + APP_ICON + "\">\n<link rel=\"apple-touch-icon\" href=\"" + APP_ICON + "\">\n"
+              + "<meta name=\"theme-color\" content=\"" + color + "\">\n"
+              + "<meta name=\"mobile-web-app-capable\" content=\"yes\">\n<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n"
+              + (edge ? "<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black-translucent\">\n" : "");
+  string register = "if (\"serviceWorker\" in navigator && location.protocol !== \"file:\") {\n"
+                  + "  navigator.serviceWorker.register(\"" + APP_WORKER + "\").catch((e) => console.warn(\"no copy to open without the network: \" + e.message));\n}\n";
+  string script = "<script type=\"text/plain\" id=\"wac-document\">\n\"use strict\";\n";
+  return swap(swap(swap(page, policy(), appPolicy()), "<title>", tags + "<title>"), script, script + register);
+}
+
+/** The manifest: the page's title as the app's name, standing alone on a phone's screen, `color` its bar's colour. */
+export string manifestOf(string title, string color) {
+  Vec<u8> out = Vec.create();
+  u8[] b = title.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '"' || b[i] == '\\') { out.push('\\'); }
+    out.push(b[i]);
+  }
+  string name = string.fromBytes(out.toArray());
+  return "{\n  \"name\": \"" + name + "\",\n  \"short_name\": \"" + name + "\",\n  \"start_url\": \"./\",\n  \"scope\": \"./\",\n"
+       + "  \"display\": \"standalone\",\n  \"background_color\": \"" + color + "\",\n  \"theme_color\": \"" + color + "\",\n"
+       + "  \"icons\": [\n"
+       + "    { \"src\": \"" + APP_ICON + "\", \"sizes\": \"192x192 512x512\", \"type\": \"image/png\", \"purpose\": \"any\" },\n"
+       + "    { \"src\": \"" + APP_ICON + "\", \"sizes\": \"512x512\", \"type\": \"image/png\", \"purpose\": \"maskable\" }\n  ]\n}\n";
+}
+
+/**
+ * **The service worker: the network first, its copy when there is none.** Every file of the site the page fetches is
+ * kept as it arrives, and a request the network cannot answer is answered from what was kept — so an installed app
+ * opens, and what it has opened before works, offline; online it never shows anything older than the site.
+ */
+export string serviceWorker() {
+  return """
+    "use strict";
+    const KEPT = "wac-page";
+    self.addEventListener("install", () => self.skipWaiting());
+    self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+    self.addEventListener("fetch", (e) => {
+      const req = e.request;
+      if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+      e.respondWith(fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          e.waitUntil(caches.open(KEPT).then((c) => c.put(req, copy)));
+        }
+        return res;
+      }, () => caches.match(req, { ignoreSearch: true }).then((kept) => kept ?? Response.error())));
+    });
+  """;
+}
+
 /** Everything before the script: the document the program draws into. */
 string head(string title) {
   return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
@@ -1621,7 +1710,7 @@ string head(string title) {
 export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs procs) {
   Asked a = askedOf(argv);
   if (a.entry == "" || a.out == "") {
-    err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--app <icon.png> [--app-color <#rgb>]] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The page's module is a module of this project**, so it is written inside it: from anywhere else its
@@ -1658,6 +1747,17 @@ export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs proc
   string encoded = base64(wasm!);
   string page = a.inPage ? inPageIndexFor(a.title, encoded, a.grants) : workerIndexFor(a.title, encoded, a.grants);
   if (a.edge) { page = edgeToEdge(page); }
+  if (a.appIcon != "") {
+    auto icon = flatten(fs.readFile(a.appIcon).wait());
+    if (icon.isErr()) {
+      err.write("build.wac: \{a.appIcon}: \{icon.err()!}\n".toBytes());
+      return 1;
+    }
+    page = asApp(page, a.appColor, a.edge);
+    fs.writeFile(a.out + "/" + APP_ICON, icon.ok()!).wait();
+    fs.writeFile(a.out + "/manifest.webmanifest", manifestOf(a.title, a.appColor).toBytes()).wait();
+    fs.writeFile(a.out + "/" + APP_WORKER, serviceWorker().toBytes()).wait();
+  }
   fs.writeFile(index, page.toBytes()).wait();
   out.line("\{index}: \{wasm!.len()} bytes of module");
   return 0;
