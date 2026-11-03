@@ -44,7 +44,7 @@ export * as html from "./tags.wac";
 export { Element, ElementEvent, Listen } from "./element.wac";
 // `wac.page` itself, for whoever answers it — a desktop drawing a program into a window, or a test.
 export { PAGE_BATCH, PAGE_CAPABILITY, PAGE_ONE_AT_A_TIME, PAGE_VERSION, Change, batchOf, PAGE_MAKE, PAGE_MAKE_TEXT, PAGE_TEXT, PAGE_ATTR, PAGE_PROP, PAGE_MOVE, PAGE_REMOVE, PAGE_LISTEN, PAGE_FOCUS, PAGE_VALUE, PAGE_PIXELS, PAGE_PIXELS_IN,
-         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_SOUND, PAGE_PLAY, PAGE_STOP, PAGE_GAIN, PAGE_COUNT, PAGE_WINDOW, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, putF64, getF64, quad, quadAt, when } from "./line.wac";
+         PAGE_SCROLL, PAGE_SELECT, PAGE_TYPE_TEXT, PAGE_TITLE, PAGE_LOG, PAGE_DOWNLOAD, PAGE_EVENT, PAGE_FILE, PAGE_FRAME, PAGE_LOCATION, PAGE_SOUND, PAGE_PLAY, PAGE_STOP, PAGE_GAIN, PAGE_GO, PAGE_COUNT, PAGE_WINDOW, Happened, PageLine, eventAnswer, happenedOf, highOf, lowOf, pair, putF64, getF64, quad, quadAt, when } from "./line.wac";
 export { Mounted, Ref, State, Ui, View } from "./view.wac";
 export { TestDoc, TestNode } from "./testdoc.wac";
 // `wac.page` answered into an element this program holds — a desktop drawing a program into a window.
@@ -244,6 +244,13 @@ export struct Page {
   }
 
   void title(this, string t) { this.line.title(t); }
+
+  /**
+   * **The location becomes `where`** — with `push`, a new place in the browser's history, which Back leaves for the
+   * one before; without, in place of this one. Heard as any new location is (`onLocation`). A page in a window of a
+   * desktop has no location of its own: its server refuses it.
+   */
+  void go(this, string where, bool push) { this.line.go(where, push); }
   void log(this, string line) { this.line.log(line); }
 
   /**

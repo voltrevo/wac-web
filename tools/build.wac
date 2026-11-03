@@ -45,11 +45,16 @@ struct Asked {
   string spawn;
   /** A development build: the page checks its views after every turn (`Page.checking`). */
   bool dev;
+  /**
+   * **To the screen's edges** (`--edge`): drawn under a phone's notch and home bar too — `viewport-fit=cover` — for a
+   * page that keeps its own content clear of them with `env(safe-area-inset-…)`.
+   */
+  bool edge;
 }
 
 /** The arguments, or a usage line in `title` and empty `entry` when they do not make sense. */
 Asked askedOf(string[] argv) {
-  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false);
+  Asked a = Asked("", "", "wac", "web", "wac", false, 0, "", false, false);
   i32 argc = argv.len();
   string[] args = string[].filled(argc, "");
   for (i32 k = 0; k < argc; k++) { args[k] = argv[k]; }
@@ -75,6 +80,11 @@ Asked askedOf(string[] argv) {
     }
     if (w == "--dev") {
       a.dev = true;
+      i++;
+      continue;
+    }
+    if (w == "--edge") {
+      a.edge = true;
       i++;
       continue;
     }
@@ -297,6 +307,8 @@ export string programSide() {
             }
             case 25: return send(["stop", lo(a)]);
             case 26: return send(["gain", lo(a), hi(b) / 1000, lo(b)]);
+            // The program's new location, known here at once; the document's history is the document's to change.
+            case 27: at = "#" + text; located(); return send(["go", text, a !== 0n]);
             // The changes the program held, in order, as each would have come alone; answered at once.
             case 22: {
               const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -1310,6 +1322,11 @@ export string documentSide() {
             g.linearRampToValueAtTime(volume, t + Math.max(ms, 1) / 1000);
           },
           frame: (id) => { requestAnimationFrame(() => emit(["timer", id])); },
+          // A new place in the history, or this one changed — neither fires `hashchange`; Back to it later does.
+          go: (where, push) => {
+            const url = where ? "#" + where : location.pathname + location.search;
+            if (push) history.pushState(null, "", url); else history.replaceState(null, "", url);
+          },
           download: (name, bytes) => {
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([bytes]));
@@ -1579,18 +1596,32 @@ export string policy() {
        + "media-src data: blob:; base-uri 'none'; form-action 'none'";
 }
 
+/**
+ * **The viewport**: as wide as the device, and — `interactive-widget` — made smaller by an on-screen keyboard, rather
+ * than covered by it, where the browser offers the choice: what is typed into stays in view.
+ */
+static string VIEWPORT = "width=device-width, initial-scale=1, interactive-widget=resizes-content";
+
+/** `page` drawn to the screen's edges (`Asked.edge`). */
+export string edgeToEdge(string page) {
+  string from = "content=\"" + VIEWPORT + "\"";
+  i32 at = page.indexOf(from);
+  if (at < 0) { return page; }
+  return page.slice(0, at) + "content=\"" + VIEWPORT + ", viewport-fit=cover\"" + page.slice(at + from.len(), page.len());
+}
+
 /** Everything before the script: the document the program draws into. */
 string head(string title) {
   return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
        + "<meta http-equiv=\"Content-Security-Policy\" content=\"" + policy() + "\">\n"
-       + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+       + "<meta name=\"viewport\" content=\"" + VIEWPORT + "\">\n"
        + "<title>" + title + "</title>\n</head>\n<body>\n<div id=\"app\"></div>\n";
 }
 
 export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs procs) {
   Asked a = askedOf(argv);
   if (a.entry == "" || a.out == "") {
-    err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
+    err.write("usage: build.wac <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--grant read,write] [--spawn <export>] [--title <t>] [--wac <binary>] [--page <spec>]\n".toBytes());
     return 2;
   }
   // **The page's module is a module of this project**, so it is written inside it: from anywhere else its
@@ -1626,6 +1657,7 @@ export i32 buildPage(string[] argv, Output err, Output out, Files fs, Procs proc
   string index = a.out + "/index.html";
   string encoded = base64(wasm!);
   string page = a.inPage ? inPageIndexFor(a.title, encoded, a.grants) : workerIndexFor(a.title, encoded, a.grants);
+  if (a.edge) { page = edgeToEdge(page); }
   fs.writeFile(index, page.toBytes()).wait();
   out.line("\{index}: \{wasm!.len()} bytes of module");
   return 0;

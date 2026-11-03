@@ -437,6 +437,32 @@ export string test_a_batched_page_sends_what_it_holds_before_it_asks() {
   return t.report();
 }
 
+/**
+ * **A page goes somewhere new**: added to the history, it hears where it went as any new location, and Back returns
+ * it to where it was; in place of where it is, Back passes it by.
+ */
+export string test_a_page_goes_somewhere_and_back_returns_it() {
+  Check t = Check.create();
+  TestDoc doc = TestDoc.create();
+  Page page = doc.page();
+  schedule page.take;
+  page.turn();
+  string heard = "";
+  page.onLocation((string where) => { heard = heard + where + ";"; });
+  page.go("apps/3", true);
+  page.turn();
+  t.isTrue(doc.said.indexOf("go apps/3 push\n") >= 0, "asked for: " + doc.said);
+  t.eqStr(page.location(), "apps/3", "there");
+  page.go("apps/4", false);
+  page.turn();
+  t.eqStr(page.location(), "apps/4", "and, in its place, there");
+  doc.back();
+  page.turn();
+  t.eqStr(page.location(), "", "Back: where it was before the place added");
+  t.eqStr(heard, "apps/3;apps/4;;", "each heard");
+  return t.report();
+}
+
 export string test_a_location_the_host_answers_at_once_is_where_the_page_starts() {
   Check t = Check.create();
   // The browser's host answers the page's first request for its location inside that request, as this one does

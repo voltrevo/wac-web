@@ -40,7 +40,10 @@ for (const mode of [[], ["--in-page"]]) {
       let browser;
       let http: { port: number; stop(): Promise<void> } | undefined;
       try {
-        await buildPage("example/sense.wac", dir, mode);
+        await buildPage("example/sense.wac", dir, ["--edge", ...mode]);
+        // To the screen's edges, and shrunk by an on-screen keyboard rather than covered.
+        const index = await Deno.readTextFile(`${dir}/index.html`);
+        if (!index.includes("interactive-widget=resizes-content, viewport-fit=cover")) throw new Error("the viewport of an --edge page");
         const port = (http = serve(dir)).port;
         browser = await chromium.launch({ args: ["--no-proxy-server"] });
         const page = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
@@ -68,6 +71,14 @@ for (const mode of [[], ["--in-page"]]) {
         await waitInPage(page, `${text("key")} !== ""`, null, { timeout: 10_000 });
         const key = await page.evaluate(text("key")) as string;
         if (key !== "ArrowLeft on time") throw new Error(`the key, and when: ${key}`);
+
+        // A place added to the history: the program hears it, the address shows it, and the browser's Back leaves it.
+        await page.click("#deeper");
+        await waitInPage(page, `${text("where")} === "deeper" && location.hash === "#deeper"`, null, { timeout: 10_000 });
+        await page.goBack();
+        await waitInPage(page, `${text("where")} === "home" && location.hash === ""`, null, { timeout: 10_000 });
+        await page.goForward();
+        await waitInPage(page, `${text("where")} === "deeper"`, null, { timeout: 10_000 });
       } finally {
         await browser?.close();
         await http?.stop();

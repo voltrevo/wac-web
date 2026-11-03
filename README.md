@@ -66,6 +66,7 @@ of the page — `page.mountIn(element, draw)` puts a view in one. `attr` refuses
 | `await sleep(ms)`, `await nextFrame()`, `await painted()` | time: answering `now()` when they settle |
 | `await nextFile()` | the next file the user picks with an `<input type="file">` or drops on the page — one per file for a folder, picked with `webkitdirectory` or dropped, named by its path inside it |
 | `download(name, bytes)` | offer bytes to the user as a file |
+| `location()`, `onLocation(f)`, `go(where, push)` | where the reader is — the address's `#` part — each change of it, and a new place: added to the browser's history, so Back returns from it, or in place of this one |
 | `sound(samples, rate)` → `Sound`; `.play(volume)`, `.loop(volume)`, `.playAt(volume, loop, at, offset)` → `Voice`; `.stop()`, `.fade(volume, ms)` | sound the program made — samples from -1 to 1, one channel — sent once and played as often as it likes, now or at a moment by `now()`'s clock — voices started for one moment start together, to the sample — and faded smoothly; heard once the person has clicked or pressed a key on the page |
 | `sys` | what the build granted — see below |
 
@@ -176,7 +177,7 @@ for the clock and the sleeps it wakes, `paint` for frames, `answerValue`, `hand`
 ## Building one
 
     wac run --allow-read --allow-write --allow-run tools/build.wac \
-        <entry.wac> <out-dir> [--in-page] [--dev] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
+        <entry.wac> <out-dir> [--in-page] [--dev] [--edge] [--grant read,write] [--spawn <export>] [--title <t>] [--page <spec>] [--wac <binary>]
 
 `tools/build.wac` writes three files: `page.wac`, **the page's program as a module** — a `main(Sys sys)` that
 opens the page its host provides, runs your `main(Page page)`, and renders each time a view has something to
@@ -191,6 +192,10 @@ request waiting for it. The document's half applies each message. By default the
 worker started from the page's own text; `--in-page` joins the two halves directly on the page's thread. Neither
 half makes a decision; everything a page does is in `src/`, and what it was not granted is refused naming the
 `--grant` that would allow it.
+
+**`--edge` draws to the screen's edges**: under a phone's notch and home bar too (`viewport-fit=cover`), for a page
+that keeps its content clear of them with `env(safe-area-inset-…)`. Every page is made smaller by an on-screen
+keyboard rather than covered by it (`interactive-widget=resizes-content`), where the browser offers the choice.
 
 **`--dev` is a development build**: after every turn each view renders everything again and logs, to the
 console, each place the page does not show what a component renders — which happens only when a render

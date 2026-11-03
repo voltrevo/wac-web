@@ -17,7 +17,7 @@ import { Answer, FAULT_UNSUPPORTED, HOST_CANNOT_WAIT, Host, OP_CAPABILITY, OP_MO
          answered } from "std";
 import { Elements } from "./element.wac";
 import { Page } from "./page.wac";
-import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_GAIN, PAGE_LOCATION, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
+import { Change, Happened, PAGE_BATCH, PAGE_CAPABILITY, batchOf, PAGE_COUNT, PAGE_EVENT, PAGE_ONE_AT_A_TIME, PAGE_FILE, PAGE_FRAME, PAGE_GAIN, PAGE_GO, PAGE_LOCATION, PAGE_PLAY, PAGE_SOUND, PAGE_STOP, PAGE_TYPE_TEXT,
          PAGE_VALUE, PAGE_VERSION, PageLine, eventAnswer, highOf, lowOf, quadAt, getF64 } from "./line.wac";
 
 /** Where this document's `wac.page` numbers start, as a host would choose them. */
@@ -87,11 +87,13 @@ export struct TestDoc {
   string location;
   /** Whether the program is told to hold its changes and send them together, as a browser's host tells it. */
   bool batching;
+  /** The locations the program went on from, adding to the history: what `back` returns to, latest last. */
+  Vec<string> visited;
 
   TestDoc create() {
     Vec<TestNode?> nodes = Vec.create();
     TestDoc d = TestDoc(nodes, 0, 0, null, null, 0, null, null, "", Vec.create(), "", 0.0, Vec.create(), Vec.create(),
-                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "", false);
+                        Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), Vec.create(), "", false, Vec.create());
     d.put(0, "div", 0 - 1);
     Host h = Host.of(
       (i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) => {
@@ -212,6 +214,12 @@ export struct TestDoc {
     for (i32 i = 0; i < asked.len(); i++) { this.answerWith(asked.get(i), this.location, u8[](), 0 as i64, 0 as i64, 0); }
   }
 
+  /** The browser's Back: the location before the last the program added to the history, if there is one. */
+  void back(this) {
+    if (this.visited.len() == 0) { return; }
+    this.go(this.visited.remove(this.visited.len() - 1));
+  }
+
   // ── The requests ───────────────────────────────────────────────────────────
 
   void request(this, i32 op, i32 id, i64 a, i64 b, string text, u8[] bytes) {
@@ -247,6 +255,12 @@ export struct TestDoc {
     if (k == 15) { this.said = this.said + "title " + text + "\n"; return; }
     if (k == 16) { this.said = this.said + "log " + text + "\n"; return; }
     if (k == 17) { this.said = this.said + "download " + text + "\n"; return; }
+    if (k == PAGE_GO) {
+      this.said = this.said + "go " + text + (a != (0 as i64) ? " push" : "") + "\n";
+      if (a != (0 as i64)) { this.visited.push(this.location); }
+      this.go(text);
+      return;
+    }
     if (k == PAGE_SOUND) { this.said = this.said + "sound \{a} \{b} \{bytes.len() / 2}\n"; return; }
     if (k == PAGE_PLAY) {
       string when = bytes.len() >= 16 ? " at \{getF64(bytes, 0)} from \{getF64(bytes, 8)}" : "";

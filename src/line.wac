@@ -30,7 +30,7 @@ import { Buf, Ticket, TicketBase, Vec } from "core";
 
 /** The capability's name, and the version this package speaks. */
 export string PAGE_CAPABILITY() { return "wac.page"; }
-export string PAGE_VERSION() { return "1.2.0"; }
+export string PAGE_VERSION() { return "1.3.0"; }
 
 /** `a` handle, `b` pair(parent, before — -1 for last), `text` tag. */
 export static i32 PAGE_MAKE = 0;
@@ -103,8 +103,13 @@ export static i32 PAGE_PLAY = 24;
 export static i32 PAGE_STOP = 25;
 /** `a` the voice, `b` pair(volume in thousandths, milliseconds to get there): its volume, changed smoothly. */
 export static i32 PAGE_GAIN = 26;
+/**
+ * `text` a location — the hash, without its `#` — and `a` 1 to add it to the browser's history, so Back returns from
+ * it, or 0 to take the place of the location there is. The program hears it as any new location (`PAGE_LOCATION`).
+ */
+export static i32 PAGE_GO = 27;
 /** How many request numbers the capability takes. */
-export static i32 PAGE_COUNT = 27;
+export static i32 PAGE_COUNT = 28;
 /**
  * **How far apart a desktop's windows' slices of `wac.page` are**: more than `PAGE_COUNT`, so a request added later
  * does not move every window but the first — a program and the desktop it runs in are built separately, and each
@@ -314,6 +319,7 @@ export struct PageLine {
   void select(this, i32 id, i32 start, i32 end, i32 seen) { this.tell(PAGE_SELECT, pair(seen, id), pair(start, end), "", u8[]()); }
   void typeText(this, i32 id, string text, i32 seen) { this.tell(PAGE_TYPE_TEXT, pair(seen, id), 0 as i64, text, u8[]()); }
   void title(this, string t) { this.tell(PAGE_TITLE, 0 as i64, 0 as i64, t, u8[]()); }
+  void go(this, string where, bool push) { this.tell(PAGE_GO, (push ? 1 : 0) as i64, 0 as i64, where, u8[]()); }
   void log(this, string line) { this.tell(PAGE_LOG, 0 as i64, 0 as i64, line, u8[]()); }
   void download(this, string name, u8[] bytes) { this.tell(PAGE_DOWNLOAD, 0 as i64, 0 as i64, name, bytes); }
   void sound(this, i32 id, i32 rate, u8[] samples) { this.tell(PAGE_SOUND, id as i64, rate as i64, "", samples); }
