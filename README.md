@@ -162,7 +162,9 @@ element is gone — the window closed — `server.close()` answers what the page
 `page.closed()` settles: a program with several windows forgets that one. **Full screen is never the served page's to take**: its
 `element.fullScreen(on)` asks the server, which asks whoever set `server.whenFullScreen(ask)` and refuses without
 one, and what was decided reaches the page's `fullscreenchange` listeners by `server.fullScreened(on)` — so a desktop
-decides when a window fills the screen, and keeps the way out of it its own.
+decides when a window fills the screen, and keeps the way out of it its own. `server.heardAt` is when the page last
+heard the person press, click or type — known before the page is told — so that whoever decides can give full screen
+only to a page asking just after.
 
 ## The site a page came from — `wac.site`
 

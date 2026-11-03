@@ -70,6 +70,12 @@ export struct PageServer {
   fn<void(Element, bool)>? asksFull;
   /** The child's elements listening for `fullscreenchange`, by its numbers: told by `fullScreened`, not the document. */
   Vec<i32> hearFull;
+  /**
+   * **When the child last heard the person act** — a press, a click, a key but Escape: what a browser counts as the
+   * person's own doing, and so when it lets a page fill the screen — by the page's clock, or -1. Known here before the
+   * child is told, so whoever decides its full screen (`whenFullScreen`) can ask whether its request came just after.
+   */
+  f64 heardAt;
 
   /** A server drawing the child into `root`, which this program holds and the child may fill as it likes. */
   PageServer into(Page page, Element root, fn<void(string)> onTitle, fn<void(string)> onLog) {
@@ -81,7 +87,7 @@ export struct PageServer {
     Queue<Ticket<Answer>> wanting;
     return PageServer(page, byId, Map.create(hashI32, i32Eq), heard, asking, handed, wanting, 0, onTitle, onLog,
                       Vec.create(), false, Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), Map.create(hashI32, i32Eq), 1.0, 0 - 1,
-                      null, Vec.create());
+                      null, Vec.create(), 0.0 - 1.0);
   }
 
   /**
@@ -473,6 +479,11 @@ export struct PageServer {
 
   /** An event heard by the child's listener `listener`, for the child — told now if it is asking, or kept. */
   void heardOn(this, i32 listener, ElementEvent ev) {
+    string k = ev.kind;
+    if (k == "pointerdown" || k == "pointerup" || k == "click" || k == "dblclick" || k == "contextmenu"
+        || ((k == "keydown" || k == "keyup") && ev.value != "Escape")) {
+      this.heardAt = this.page.now();
+    }
     i32? target = this.childOf.get(ev.target.id);
     this.seq++;
     Happened h = Happened(this.seq, ev.kind, target ?? listener, listener, ev.value, ev.x, ev.y, ev.mods, ev.selStart,

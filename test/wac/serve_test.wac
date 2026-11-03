@@ -152,6 +152,7 @@ export string test_a_child_asks_whoever_serves_it_for_full_screen_and_hears_what
   Rig r = rig();
   schedule r.child.take;
   Element box = r.child.root().append("div");
+  box.attr("id", "box");
   string heard = "";
   box.on("fullscreenchange", Listen.none(), (ElementEvent e) => { heard = heard + "[" + e.value + "]"; });
   box.fullScreen(true);
@@ -165,6 +166,12 @@ export string test_a_child_asks_whoever_serves_it_for_full_screen_and_hears_what
   r.child.turn();
   r.desk.turn();
   t.eqStr(asked, "div on;", "asked of whoever serves it, with the element it asked for");
+  t.isTrue(r.server.heardAt < 0.0, "the person has done nothing in it yet");
+  box.on("click", Listen.none(), (ElementEvent e) => { });
+  r.child.turn();
+  r.desk.turn();
+  r.doc.fire(r.doc.find("id", "box"), "click", "");
+  t.isTrue(r.server.heardAt >= 0.0, "a click it heard: when, known before it is told");
   t.eqI32(r.doc.said.indexOf("fullscreen"), 0 - 1, "and not of the document, nor listened for there: " + r.doc.said);
   r.server.fullScreened(true);
   r.child.turn();
