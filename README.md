@@ -1,5 +1,7 @@
 # web — a page, as a wac program sees it
 
+> **This moved into [voltrevo/wac](https://github.com/voltrevo/wac) as [`projects/web`](https://github.com/voltrevo/wac/tree/master/projects/web) on 2026-11-24, with its whole history — including commits that never reached this copy.** Work happens there now. This repository is left as it is, for the older pins that still name its commits.
+
 `export async i32 main(Page page)` is a web page. It runs in a worker, so a program that computes for a
 while never freezes the tab — or, built with `--in-page`, on the page's own thread. There is no shared
 memory and nothing the server has to send, so a built page is one `index.html` that works from a
